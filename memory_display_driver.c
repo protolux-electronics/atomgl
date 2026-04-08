@@ -60,7 +60,7 @@
 #define CHECK_OVERFLOW 1
 #define REPORT_UNEXPECTED_MSGS 0
 
-#include "font.c"
+#include "font_data.h"
 
 struct SPI
 {

@@ -43,7 +43,7 @@
 #include "display_items.h"
 #include "display_common.h"
 #include "draw_common.h"
-#include "font.c"
+#include "font_data.h"
 #include "image_helpers.h"
 #include "spi_display.h"
 

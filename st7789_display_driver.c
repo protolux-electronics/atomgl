@@ -96,7 +96,7 @@
 #define TFT_MAD_BGR 0x08
 #define TFT_MAD_COLOR_ORDER TFT_MAD_RGB
 
-#include "font.c"
+#include "font_data.h"
 
 static const char *TAG = "st7789_display_driver";
 

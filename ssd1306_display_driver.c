@@ -70,7 +70,7 @@ struct SPI
 
 static void do_update(Context *ctx, term display_list);
 
-#include "font.c"
+#include "font_data.h"
 #include "display_items.h"
 #include "draw_common.h"
 #include "monochrome.h"

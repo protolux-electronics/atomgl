@@ -40,7 +40,7 @@
 
 #define CHAR_WIDTH 8
 #include "../display_items.h"
-#include "../font.c"
+#include "../font_data.h"
 #include "../image_helpers.h"
 
 struct DisplayOpts

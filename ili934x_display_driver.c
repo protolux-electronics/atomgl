@@ -107,7 +107,7 @@
 #define TFT_INVOFF 0x20
 #define TFT_INVON 0x21
 
-#include "font.c"
+#include "font_data.h"
 
 static const char *TAG = "ili934x_display_driver";
 
