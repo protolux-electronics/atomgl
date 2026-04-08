@@ -102,8 +102,6 @@
 #define ILI948X_TFTWIDTH 320
 #define ILI948X_TFTHEIGHT 480
 
-#define UNUSED(x) ((void) (x))
-
 #include "font.c"
 
 static const char *TAG = "ili948x_display_driver";
