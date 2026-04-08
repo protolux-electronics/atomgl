@@ -52,6 +52,7 @@
 #include "display_common.h"
 #include "display_items.h"
 #include "display_message.h"
+#include "display_task.h"
 #include "image_helpers.h"
 #include "spi_display.h"
 
@@ -121,7 +122,12 @@ struct SPI
     avm_int_t rotation;
 
     Context *ctx;
+
+    struct DisplayTaskArgs display_args;
 };
+
+#define SPI_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
 // This struct is just for compatibility reasons with the SDL display driver
 // so it is possible to easily copy & paste code from there.
@@ -172,9 +178,6 @@ static inline uint16_t uint32_color_to_surface(struct Screen *s, uint32_t color)
     return rgb565_color_to_surface(s, color16);
 }
 
-static QueueHandle_t display_messages_queue;
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
 static void display_init(Context *ctx, term opts);
 static void display_init42c(struct SPI *spi);
 static void display_init41(struct SPI *spi);
@@ -461,7 +464,7 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = screen->w;
     int screen_height = screen->h;
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
     writecommand(spi, TFT_RAMWR);
@@ -551,7 +554,7 @@ static void process_message(Message *message, Context *ctx)
     }
     term cmd = term_get_tuple_element(req, 0);
 
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     if (cmd == context_make_atom(ctx, "\x6"
                                       "update")) {
@@ -593,36 +596,6 @@ static void process_message(Message *message, Context *ctx)
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
-static void process_messages(void *arg)
-{
-    struct SPI *args = arg;
-
-    while (true) {
-        Message *message;
-        xQueueReceive(display_messages_queue, &message, portMAX_DELAY);
-        process_message(message, args->ctx);
-
-        BEGIN_WITH_STACK_HEAP(1, temp_heap);
-        mailbox_message_dispose(&message->base, &temp_heap);
-        END_WITH_STACK_HEAP(temp_heap, args->ctx->global);
-    }
-}
-
-void display_enqueue_message(Message *message)
-{
-    xQueueSend(display_messages_queue, &message, 1);
-}
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
-{
-    MailboxMessage *mbox_msg = mailbox_take_message(&ctx->mailbox);
-    Message *msg = CONTAINER_OF(mbox_msg, Message, base);
-
-    xQueueSend(display_messages_queue, &msg, 1);
-
-    return NativeContinue;
-}
-
 static void set_rotation(struct SPI *spi, int rotation)
 {
     if (rotation == 1) {
@@ -648,10 +621,12 @@ static void display_init(Context *ctx, term opts)
     screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
     screen->pixels_out = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
 
-    display_messages_queue = xQueueCreate(32, sizeof(Message *));
-
     struct SPI *spi = malloc(sizeof(struct SPI));
-    ctx->platform_data = spi;
+
+    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    spi->display_args.process_message_fn = process_message;
+    spi->display_args.ctx = ctx;
+    ctx->platform_data = &spi->display_args;
 
     spi->ctx = ctx;
 
@@ -728,7 +703,7 @@ static void display_init(Context *ctx, term opts)
     backlight_gpio_parse_config(&backlight_config, opts, ctx->global);
     backlight_gpio_init(&backlight_config);
 
-    xTaskCreate(process_messages, "display", 10000, spi, 1, NULL);
+    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 }
 
 static void display_init41(struct SPI *spi)

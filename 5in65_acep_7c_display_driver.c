@@ -42,6 +42,7 @@
 
 #include "display_items.h"
 #include "display_message.h"
+#include "display_task.h"
 #include "display_common.h"
 #include "draw_common.h"
 #include "font_data.h"
@@ -70,9 +71,12 @@ struct SPI
 
     int count_to_refresh;
     uint64_t last_refresh;
+
+    struct DisplayTaskArgs display_args;
 };
 
-static QueueHandle_t display_messages_queue;
+#define SPI_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
 static inline float square(float p)
 {
@@ -388,7 +392,7 @@ static int draw_text_x(uint8_t *line_buf, int xpos, int ypos, int max_line_len, 
 
 void wait_some_time(Context *ctx)
 {
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -403,7 +407,7 @@ void wait_some_time(Context *ctx)
 
 void update_last_refresh_ts(Context *ctx)
 {
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -412,7 +416,7 @@ void update_last_refresh_ts(Context *ctx)
 
 void maybe_refresh(Context *ctx)
 {
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     spi->count_to_refresh--;
     if (spi->count_to_refresh <= 0) {
@@ -443,7 +447,7 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = DISPLAY_WIDTH;
     int screen_height = DISPLAY_HEIGHT;
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     struct SPIDisplay *spi_disp = &spi->spi_disp;
     spi_device_acquire_bus(spi_disp->handle, portMAX_DELAY);
@@ -547,24 +551,9 @@ static void process_message(Message *message, Context *ctx)
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
-static void process_messages(void *arg)
-{
-    struct SPI *args = arg;
-
-    while (true) {
-        Message *message;
-        xQueueReceive(display_messages_queue, &message, portMAX_DELAY);
-        process_message(message, args->ctx);
-
-        BEGIN_WITH_STACK_HEAP(1, temp_heap);
-        mailbox_message_dispose(&message->base, &temp_heap);
-        END_WITH_STACK_HEAP(temp_heap, args->ctx->global);
-    }
-}
-
 static void clear_screen(Context *ctx, int color)
 {
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
 
@@ -678,7 +667,7 @@ static void display_spi_init(Context *ctx, term opts)
     writedata(spi, 0x37);
     spi_device_release_bus(spi->spi_disp.handle);
 
-    ctx->platform_data = spi;
+    ctx->platform_data = &spi->display_args;
 
     spi->ctx = ctx;
 
@@ -696,19 +685,11 @@ static void display_spi_init(Context *ctx, term opts)
     while (1)
         ;
 #else
-    display_messages_queue = xQueueCreate(32, sizeof(Message *));
-    xTaskCreate(process_messages, "display", 10000, spi, 1, NULL);
+    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    spi->display_args.process_message_fn = process_message;
+    spi->display_args.ctx = ctx;
+    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 #endif
-}
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
-{
-    MailboxMessage *mbox_msg = mailbox_take_message(&ctx->mailbox);
-    Message *msg = CONTAINER_OF(mbox_msg, Message, base);
-
-    xQueueSend(display_messages_queue, &msg, 1);
-
-    return NativeContinue;
 }
 
 Context *acep_5in65_7c_display_driver_create_port(GlobalContext *global, term opts)

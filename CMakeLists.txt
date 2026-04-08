@@ -31,6 +31,7 @@ idf_component_register(SRCS
     "display_driver.c"
     "display_items.c"
     "display_message.c"
+    "display_task.c"
     "5in65_acep_7c_display_driver.c"
     "font_data.c"
     "ili934x_display_driver.c"

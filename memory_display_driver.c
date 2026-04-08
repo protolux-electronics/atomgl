@@ -51,6 +51,7 @@
 #include <math.h>
 
 #include "display_common.h"
+#include "display_task.h"
 #include "spi_display.h"
 
 #define CHAR_WIDTH 8
@@ -66,7 +67,12 @@ struct SPI
 {
     struct SPIDisplay spi_disp;
     Context *ctx;
+
+    struct DisplayTaskArgs display_args;
 };
+
+#define SPI_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
 #include "display_items.h"
 #include "display_message.h"
@@ -87,9 +93,6 @@ struct Screen
 
 static struct Screen *screen;
 
-static QueueHandle_t display_messages_queue;
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
 static void display_init(Context *ctx, term opts);
 
 int vcom = 0x0;
@@ -120,7 +123,7 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = screen->w;
     int screen_height = screen->h;
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     int memsize = 2 + 400 / 8 + 2;
     uint8_t *buf = screen->pixels;
@@ -214,31 +217,6 @@ static void process_message(Message *message, Context *ctx)
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
-static void process_messages(void *arg)
-{
-    struct SPI *args = arg;
-
-    while (true) {
-        Message *message;
-        xQueueReceive(display_messages_queue, &message, portMAX_DELAY);
-        process_message(message, args->ctx);
-
-        BEGIN_WITH_STACK_HEAP(1, temp_heap);
-        mailbox_message_dispose(&message->base, &temp_heap);
-        END_WITH_STACK_HEAP(temp_heap, args->ctx->global);
-    }
-}
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
-{
-    MailboxMessage *mbox_msg = mailbox_take_message(&ctx->mailbox);
-    Message *msg = CONTAINER_OF(mbox_msg, Message, base);
-
-    xQueueSend(display_messages_queue, &msg, 1);
-
-    return NativeContinue;
-}
-
 Context *memory_lcd_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
@@ -267,12 +245,14 @@ static void display_init(Context *ctx, term opts)
         abort();
     }
 
-    display_messages_queue = xQueueCreate(32, sizeof(Message *));
-
     GlobalContext *glb = ctx->global;
 
     struct SPI *spi = malloc(sizeof(struct SPI));
-    ctx->platform_data = spi;
+
+    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    spi->display_args.process_message_fn = process_message;
+    spi->display_args.ctx = ctx;
+    ctx->platform_data = &spi->display_args;
 
     spi->ctx = ctx;
 
@@ -295,5 +275,5 @@ static void display_init(Context *ctx, term opts)
         gpio_set_level(en_gpio, 1);
     }
 
-    xTaskCreate(process_messages, "display", 10000, spi, 1, NULL);
+    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 }

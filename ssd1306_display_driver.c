@@ -27,11 +27,20 @@
 #include <freertos/task.h>
 
 #include <context.h>
+#include <defaultatoms.h>
+#include <globalcontext.h>
 #include <interop.h>
+#include <mailbox.h>
+#include <port.h>
+#include <term.h>
+#include <utils.h>
 
 #include <i2c_driver.h>
 
 #include "display_common.h"
+#include "display_message.h"
+#include "display_task.h"
+#include "image_helpers.h"
 
 #define TAG "SSD1306"
 
@@ -66,15 +75,17 @@ struct SPI
     term i2c_host;
     display_type_t type;
     Context *ctx;
+
+    struct DisplayTaskArgs display_args;
 };
 
-static void do_update(Context *ctx, term display_list);
+#define SPI_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
 #include "font_data.h"
 #include "display_items.h"
 #include "draw_common.h"
 #include "monochrome.h"
-#include "message_helpers.h"
 
 static void do_update(Context *ctx, term display_list)
 {
@@ -91,7 +102,7 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = DISPLAY_WIDTH;
     int screen_height = DISPLAY_HEIGHT;
-    struct SPI *spi = ctx->platform_data;
+    struct SPI *spi = SPI_FROM_CTX(ctx);
 
     int memsize = (DISPLAY_WIDTH * (PAGE_HEIGHT + 1)) / sizeof(uint8_t);
     uint8_t *buf = malloc(memsize);
@@ -165,6 +176,46 @@ static void do_update(Context *ctx, term display_list)
     destroy_items(items, len);
 }
 
+static void process_message(Message *message, Context *ctx)
+{
+    GenMessage gen_message;
+    if (UNLIKELY(port_parse_gen_message(message->message, &gen_message) != GenCallMessage)) {
+        fprintf(stderr, "Received invalid message.");
+        AVM_ABORT();
+    }
+
+    term req = gen_message.req;
+    if (UNLIKELY(!term_is_tuple(req) || term_get_tuple_arity(req) < 1)) {
+        AVM_ABORT();
+    }
+    term cmd = term_get_tuple_element(req, 0);
+
+    if (cmd == context_make_atom(ctx, "\x6"
+                                      "update")) {
+        term display_list = term_get_tuple_element(req, 1);
+        do_update(ctx, display_list);
+
+    } else if (cmd == globalcontext_make_atom(ctx->global, "\xA" "load_image")) {
+        handle_load_image(req, gen_message.ref, gen_message.pid, ctx);
+        return;
+
+    } else {
+#if REPORT_UNEXPECTED_MSGS
+        fprintf(stderr, "display: ");
+        term_display(stderr, req, ctx);
+        fprintf(stderr, "\n");
+#endif
+    }
+
+    BEGIN_WITH_STACK_HEAP(TUPLE_SIZE(2) + REF_SIZE, heap);
+    term return_tuple = term_alloc_tuple(2, &heap);
+    term_put_tuple_element(return_tuple, 0, gen_message.ref);
+    term_put_tuple_element(return_tuple, 1, OK_ATOM);
+
+    send_message(gen_message.pid, return_tuple, ctx->global);
+    END_WITH_STACK_HEAP(heap, ctx->global);
+}
+
 static void display_init(Context *ctx, term opts)
 {
     GlobalContext *glb = ctx->global;
@@ -178,10 +229,12 @@ static void display_init(Context *ctx, term opts)
 
     bool invert = interop_kv_get_value(opts, ATOM_STR("\x6", "invert"), glb) == TRUE_ATOM;
 
-    display_messages_queue = xQueueCreate(32, sizeof(Message *));
-
     struct SPI *spi = malloc(sizeof(struct SPI));
-    ctx->platform_data = spi;
+
+    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    spi->display_args.process_message_fn = process_message;
+    spi->display_args.ctx = ctx;
+    ctx->platform_data = &spi->display_args;
 
     spi->ctx = ctx;
     spi->type = DISPLAY_SSD1306; // Default to SSD1306
@@ -289,7 +342,7 @@ static void display_init(Context *ctx, term opts)
     if (res != ESP_OK) {
         ESP_LOGE(TAG, "ssd1306/ssd1315 OLED configuration failed. error: 0x%.2X", res);
     } else {
-        xTaskCreate(process_messages, "display", 10000, spi, 1, NULL);
+        xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
     }
 
     i2c_cmd_link_delete(cmd);

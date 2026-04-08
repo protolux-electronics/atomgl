@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2020-2022 Davide Bettio <davide@uninstall.it>
+ * Copyright 2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _DISPLAY_DRIVER_H_
-#define _DISPLAY_DRIVER_H_
+#ifndef _DISPLAY_TASK_H_
+#define _DISPLAY_TASK_H_
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 #include <context.h>
-#include <term.h>
+#include <mailbox.h>
 
-Context *display_create_port(GlobalContext *global, term opts);
+struct DisplayTaskArgs
+{
+    QueueHandle_t messages_queue;
+    void (*process_message_fn)(Message *message, Context *ctx);
+    Context *ctx;
+};
+
+NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
+void display_process_messages(void *arg);
 
 #endif
