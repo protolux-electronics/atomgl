@@ -53,6 +53,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
 #include "display_message.h"
@@ -128,20 +129,7 @@ struct SPI
 #define SPI_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
-// Double-buffered scanline buffers.
-struct Screen
-{
-    int w;
-    int h;
-    uint16_t *pixels;
-    uint16_t *pixels_out;
-
-    // ILI9488: 3 bytes/pixel.
-    uint8_t *bytes;
-    uint8_t *bytes_out;
-};
-
-static struct Screen *screen;
+static struct DCSLCDScreen *screen;
 
 // ILI9488 scanline conversion: RGB565 -> RGB888 bytes.
 static inline void rgb565swapped_line_to_rgb888(uint8_t *dst, const uint16_t *src_swapped, int n_pixels)
@@ -651,7 +639,7 @@ Context *ili948x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct Screen));
+    screen = malloc(sizeof(struct DCSLCDScreen));
 
     struct SPI *spi = malloc(sizeof(struct SPI));
 

@@ -50,6 +50,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
 #include "display_message.h"
@@ -130,17 +131,7 @@ struct SPI
 #define SPI_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
-// This struct is just for compatibility reasons with the SDL display driver
-// so it is possible to easily copy & paste code from there.
-struct Screen
-{
-    int w;
-    int h;
-    uint16_t *pixels;
-    uint16_t *pixels_out;
-};
-
-static struct Screen *screen;
+static struct DCSLCDScreen *screen;
 
 static void display_init(Context *ctx, term opts);
 static void display_init42c(struct SPI *spi);
@@ -564,7 +555,7 @@ Context *ili934x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct Screen));
+    screen = malloc(sizeof(struct DCSLCDScreen));
     // FIXME: hardcoded width and height
     screen->w = 320;
     screen->h = 240;

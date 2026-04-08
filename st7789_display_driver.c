@@ -50,6 +50,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
 #include "display_message.h"
@@ -124,19 +125,7 @@ struct SPI
 #define SPI_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
-// This struct is just for compatibility reasons with the SDL display driver
-// so it is possible to easily copy & paste code from there.
-struct Screen
-{
-    int w;
-    int h;
-    avm_int_t x_offset;
-    avm_int_t y_offset;
-    uint16_t *pixels;
-    uint16_t *pixels_out;
-};
-
-static struct Screen *screen;
+static struct DCSLCDScreen *screen;
 
 static void display_init(Context *ctx, term opts);
 static void display_init_alt_gamma_2(struct SPI *spi);
@@ -569,7 +558,7 @@ static void display_init(Context *ctx, term opts)
     term height_term = interop_kv_get_value_default(
         opts, ATOM_STR("\x6", "height"), term_from_int(240), ctx->global);
 
-    screen = malloc(sizeof(struct Screen));
+    screen = malloc(sizeof(struct DCSLCDScreen));
     screen->w = term_to_int(width_term);
     screen->h = term_to_int(height_term);
     screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
@@ -613,8 +602,8 @@ static void display_init(Context *ctx, term opts)
         opts, ATOM_STR("\x8", "y_offset"), term_from_int(0), ctx->global);
 
     if (term_is_integer(x_off_term) && term_is_integer(y_off_term)) {
-        screen->x_offset = term_to_int(x_off_term);
-        screen->y_offset = term_to_int(y_off_term);
+        screen->x_offset = (int16_t) term_to_int(x_off_term);
+        screen->y_offset = (int16_t) term_to_int(y_off_term);
     } else {
         ok = false;
     }
