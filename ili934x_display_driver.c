@@ -49,6 +49,7 @@
 #include <trace.h>
 
 #include "backlight_gpio.h"
+#include "dcs_lcd_color.h"
 #include "display_common.h"
 #include "display_items.h"
 #include "display_message.h"
@@ -141,43 +142,6 @@ struct Screen
 
 static struct Screen *screen;
 
-// This functions is taken from:
-// https://stackoverflow.com/questions/18937701/combining-two-16-bits-rgb-colors-with-alpha-blending
-static inline uint16_t alpha_blend_rgb565(uint32_t fg, uint32_t bg, uint8_t alpha)
-{
-    alpha = (alpha + 4) >> 3;
-    bg = (bg | (bg << 16)) & 0b00000111111000001111100000011111;
-    fg = (fg | (fg << 16)) & 0b00000111111000001111100000011111;
-    uint32_t result = ((((fg - bg) * alpha) >> 5) + bg) & 0b00000111111000001111100000011111;
-    return (uint16_t)((result >> 16) | result);
-}
-
-static inline uint8_t rgba8888_get_alpha(uint32_t color)
-{
-    return color & 0xFF;
-}
-
-static inline uint16_t rgba8888_color_to_rgb565(struct Screen *s, uint32_t color)
-{
-    uint8_t r = color >> 24;
-    uint8_t g = (color >> 16) & 0xFF;
-    uint8_t b = (color >> 8) & 0xFF;
-
-    return (((uint16_t)(r >> 3)) << 11) | (((uint16_t)(g >> 2)) << 5) | ((uint16_t) b >> 3);
-}
-
-static inline uint16_t rgb565_color_to_surface(struct Screen *s, uint16_t color16)
-{
-    return (uint16_t) SPI_SWAP_DATA_TX(color16, 16);
-}
-
-static inline uint16_t uint32_color_to_surface(struct Screen *s, uint32_t color)
-{
-    uint16_t color16 = rgba8888_color_to_rgb565(s, color);
-
-    return rgb565_color_to_surface(s, color16);
-}
-
 static void display_init(Context *ctx, term opts);
 static void display_init42c(struct SPI *spi);
 static void display_init41(struct SPI *spi);
@@ -203,7 +167,7 @@ static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *i
     uint16_t bgcolor = 0;
     bool visible_bg;
     if (item->brcolor != 0) {
-        bgcolor = rgba8888_color_to_rgb565(screen, item->brcolor);
+        bgcolor = rgba8888_color_to_rgb565(item->brcolor);
         visible_bg = true;
     } else {
         visible_bg = false;
@@ -225,12 +189,12 @@ static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *i
         uint32_t img_pixel = READ_32_UNALIGNED(pixels);
         uint8_t alpha = rgba8888_get_alpha(img_pixel);
         if (alpha == 0xFF) {
-            uint16_t color = uint32_color_to_surface(screen, img_pixel);
+            uint16_t color = uint32_color_to_surface(img_pixel);
             pixmem16[drawn_pixels] = color;
         } else if (visible_bg) {
-            uint16_t color = rgba8888_color_to_rgb565(screen, img_pixel);
+            uint16_t color = rgba8888_color_to_rgb565(img_pixel);
             uint16_t blended = alpha_blend_rgb565(color, bgcolor, alpha);
-            pixmem16[drawn_pixels] = rgb565_color_to_surface(screen, blended);
+            pixmem16[drawn_pixels] = rgb565_color_to_surface(blended);
         } else {
             return drawn_pixels;
         }
@@ -249,7 +213,7 @@ static int draw_scaled_cropped_img_x(int xpos, int ypos, int max_line_len, BaseD
     uint16_t bgcolor = 0;
     bool visible_bg;
     if (item->brcolor != 0) {
-        bgcolor = rgba8888_color_to_rgb565(screen, item->brcolor);
+        bgcolor = rgba8888_color_to_rgb565(item->brcolor);
         visible_bg = true;
     } else {
         visible_bg = false;
@@ -282,12 +246,12 @@ static int draw_scaled_cropped_img_x(int xpos, int ypos, int max_line_len, BaseD
         uint32_t img_pixel = READ_32_UNALIGNED(pixels);
         uint8_t alpha = rgba8888_get_alpha(img_pixel);
         if (alpha == 0xFF) {
-            uint16_t color = uint32_color_to_surface(screen, img_pixel);
+            uint16_t color = uint32_color_to_surface(img_pixel);
             pixmem16[drawn_pixels] = color;
         } else if (visible_bg) {
-            uint16_t color = rgba8888_color_to_rgb565(screen, img_pixel);
+            uint16_t color = rgba8888_color_to_rgb565(img_pixel);
             uint16_t blended = alpha_blend_rgb565(color, bgcolor, alpha);
-            pixmem16[drawn_pixels] = rgb565_color_to_surface(screen, blended);
+            pixmem16[drawn_pixels] = rgb565_color_to_surface(blended);
         } else {
             return drawn_pixels;
         }
@@ -303,7 +267,7 @@ static int draw_rect_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *it
 {
     int x = item->x;
     int width = item->width;
-    uint16_t color = uint32_color_to_surface(screen, item->brcolor);
+    uint16_t color = uint32_color_to_surface(item->brcolor);
 
     int drawn_pixels = 0;
 
@@ -325,11 +289,11 @@ static int draw_text_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *it
 {
     int x = item->x;
     int y = item->y;
-    uint16_t fgcolor = uint32_color_to_surface(screen, item->data.text_data.fgcolor);
+    uint16_t fgcolor = uint32_color_to_surface(item->data.text_data.fgcolor);
     uint16_t bgcolor;
     bool visible_bg;
     if (item->brcolor != 0) {
-        bgcolor = uint32_color_to_surface(screen, item->brcolor);
+        bgcolor = uint32_color_to_surface(item->brcolor);
         visible_bg = true;
     } else {
         visible_bg = false;
