@@ -40,6 +40,7 @@
 
 #define CHAR_WIDTH 8
 #include "../display_items.h"
+#include "../display_message.h"
 #include "../font_data.h"
 #include "../image_helpers.h"
 
@@ -649,12 +650,6 @@ static NativeHandlerResult consume_display_mailbox(Context *ctx)
     process_message(ctx);
 
     return NativeContinue;
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static inline int replace_new_line(int c)

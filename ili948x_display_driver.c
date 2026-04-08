@@ -54,6 +54,7 @@
 #include "backlight_gpio.h"
 #include "display_common.h"
 #include "display_items.h"
+#include "display_message.h"
 #include "image_helpers.h"
 #include "spi_display.h"
 
@@ -105,8 +106,6 @@
 #include "font_data.h"
 
 static const char *TAG = "ili948x_display_driver";
-
-static void send_message(term pid, term message, GlobalContext *global);
 
 struct SPI
 {
@@ -196,12 +195,6 @@ static inline void rgb565swapped_line_to_rgb888(uint8_t *dst, const uint16_t *sr
         dst[i * 3 + 2] = b8;
     }
 }
-
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
-};
 
 static QueueHandle_t display_messages_queue;
 
@@ -744,12 +737,6 @@ Context *ili948x_display_create_port(GlobalContext *global, term opts)
     ctx->native_handler = display_driver_consume_mailbox;
     display_init(ctx, opts);
     return ctx;
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static void display_init(Context *ctx, term opts)

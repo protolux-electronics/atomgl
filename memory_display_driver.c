@@ -69,6 +69,7 @@ struct SPI
 };
 
 #include "display_items.h"
+#include "display_message.h"
 #include "draw_common.h"
 #include "image_helpers.h"
 #include "monochrome.h"
@@ -85,12 +86,6 @@ struct Screen
 };
 
 static struct Screen *screen;
-
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
-};
 
 static QueueHandle_t display_messages_queue;
 
@@ -179,8 +174,6 @@ static void do_update(Context *ctx, term display_list)
     destroy_items(items, len);
 }
 
-static void send_message(term pid, term message, GlobalContext *global);
-
 static void process_message(Message *message, Context *ctx)
 {
     GenMessage gen_message;
@@ -252,12 +245,6 @@ Context *memory_lcd_display_create_port(GlobalContext *global, term opts)
     ctx->native_handler = display_driver_consume_mailbox;
     display_init(ctx, opts);
     return ctx;
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static void display_init(Context *ctx, term opts)

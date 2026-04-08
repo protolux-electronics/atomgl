@@ -41,6 +41,7 @@
 #define DISPLAY_HEIGHT 448
 
 #include "display_items.h"
+#include "display_message.h"
 #include "display_common.h"
 #include "draw_common.h"
 #include "font_data.h"
@@ -55,7 +56,6 @@
 
 static const char *TAG = "5in65_acep_7c_display_driver";
 
-static void send_message(term pid, term message, GlobalContext *global);
 static void clear_screen(Context *ctx, int color);
 
 struct SPI
@@ -70,12 +70,6 @@ struct SPI
 
     int count_to_refresh;
     uint64_t last_refresh;
-};
-
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
 };
 
 static QueueHandle_t display_messages_queue;
@@ -566,12 +560,6 @@ static void process_messages(void *arg)
         mailbox_message_dispose(&message->base, &temp_heap);
         END_WITH_STACK_HEAP(temp_heap, args->ctx->global);
     }
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static void clear_screen(Context *ctx, int color)

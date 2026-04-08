@@ -51,6 +51,7 @@
 #include "backlight_gpio.h"
 #include "display_common.h"
 #include "display_items.h"
+#include "display_message.h"
 #include "image_helpers.h"
 #include "spi_display.h"
 
@@ -111,8 +112,6 @@
 
 static const char *TAG = "ili934x_display_driver";
 
-static void send_message(term pid, term message, GlobalContext *global);
-
 struct SPI
 {
     struct SPIDisplay spi_disp;
@@ -172,12 +171,6 @@ static inline uint16_t uint32_color_to_surface(struct Screen *s, uint32_t color)
 
     return rgb565_color_to_surface(s, color16);
 }
-
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
-};
 
 static QueueHandle_t display_messages_queue;
 
@@ -644,12 +637,6 @@ Context *ili934x_display_create_port(GlobalContext *global, term opts)
     ctx->native_handler = display_driver_consume_mailbox;
     display_init(ctx, opts);
     return ctx;
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static void display_init(Context *ctx, term opts)

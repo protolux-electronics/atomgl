@@ -47,12 +47,6 @@
 
 #include "image_helpers.h"
 
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
-};
-
 static QueueHandle_t display_messages_queue;
 
 static NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
