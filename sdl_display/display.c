@@ -601,10 +601,11 @@ static void process_message(Context *ctx)
         term font_bin = term_get_tuple_element(req, 2);
         EpdFont *loaded_font = ufont_parse(term_binary_data(font_bin), term_binary_size(font_bin));
 
-        AtomString handle_atom = globalcontext_atomstring_from_term(ctx->global, term_get_tuple_element(req, 1));
-        char handle[255];
-        atom_string_to_c(handle_atom, handle, sizeof(handle));
-        ufont_manager_register(ufont_manager, handle, loaded_font);
+        char *handle = interop_atom_to_string(ctx, term_get_tuple_element(req, 1));
+        if (handle != NULL) {
+            ufont_manager_register(ufont_manager, handle, loaded_font);
+            free(handle);
+        }
 
     } else {
         fprintf(stderr, "unexpected command: ");
