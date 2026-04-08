@@ -200,11 +200,9 @@ static void process_message(Message *message, Context *ctx)
         return;
 
     } else {
-#if REPORT_UNEXPECTED_MSGS
         fprintf(stderr, "display: ");
         term_display(stderr, req, ctx);
         fprintf(stderr, "\n");
-#endif
     }
 
     BEGIN_WITH_STACK_HEAP(TUPLE_SIZE(2) + REF_SIZE, heap);
