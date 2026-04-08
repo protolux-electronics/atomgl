@@ -54,6 +54,7 @@
 #include "display_message.h"
 #include "display_task.h"
 #include "image_helpers.h"
+#include "spi_dc_driver.h"
 #include "spi_display.h"
 
 // if needed it can be lowered to 27000000, while maximum is 62.5 Mhz
@@ -109,8 +110,7 @@ static inline void delay(int ms)
 
 struct SPI
 {
-    struct SPIDisplay spi_disp;
-    int dc_gpio;
+    struct SPIDCBus bus;
     int reset_gpio;
 
     avm_int_t rotation;
@@ -179,34 +179,20 @@ static void display_init_alt_gamma_2(struct SPI *spi);
 static void display_init_std(struct SPI *spi);
 static void display_init_using_list(struct SPI *spi, term init_list);
 
-static inline void writedata(struct SPI *spi, uint32_t data)
-{
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 8, data);
-    spi_device_release_bus(spi->spi_disp.handle);
-}
-
-static inline void writecommand(struct SPI *spi, uint8_t command)
-{
-    gpio_set_level(spi->dc_gpio, 0);
-    writedata(spi, command);
-    gpio_set_level(spi->dc_gpio, 1);
-}
-
 static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
 {
     x += screen->x_offset;
     y += screen->y_offset;
 
-    writecommand(spi, ST7789_CASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, ST7789_CASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
-    writecommand(spi, ST7789_RASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, ST7789_RASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 }
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
@@ -467,8 +453,8 @@ static void do_update(Context *ctx, term display_list)
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
     set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    writecommand(spi, ST7789_RAMWR);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_dc_writecommand(&spi->bus, ST7789_RAMWR);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
 
@@ -483,23 +469,23 @@ static void do_update(Context *ctx, term display_list)
             spi_transaction_t *trans;
             // I did a quick measurement, and most of the time is spent waiting for DMA transaction
             // eg. 23 us spent in draw_x, 188 us spent in spi_device_get_trans_result
-            spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         // NEW CODE
         void *tmp = screen->pixels;
         screen->pixels = screen->pixels_out;
         screen->pixels_out = tmp;
-        spi_display_dmawrite(&spi->spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+        spi_display_dmawrite(&spi->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
         transaction_in_progress = true;
     }
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
     destroy_items(items, len);
 }
@@ -510,7 +496,7 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
 
     set_screen_paint_area(spi, x, y, width, height);
 
-    writecommand(spi, ST7789_RAMWR);
+    spi_dc_writecommand(&spi->bus, ST7789_RAMWR);
 
     int dest_size = width * height;
     int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
@@ -519,13 +505,13 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
 
     uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
 
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
     for (int i = 0; i < chunks; i++) {
         const uint16_t *data_b = data + 1024 * i;
         for (int j = 0; j < 1024; j++) {
             tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
         }
-        spi_display_dmawrite(&spi->spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
+        spi_display_dmawrite(&spi->bus.spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
     }
     int last_chunk_size = dest_size - chunks * 1024;
     if (last_chunk_size) {
@@ -533,9 +519,9 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
         for (int j = 0; j < 1024; j++) {
             tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
         }
-        spi_display_dmawrite(&spi->spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
+        spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
     }
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
     free(tmpbuf);
 }
@@ -599,8 +585,8 @@ static void process_message(Message *message, Context *ctx)
 static void set_rotation(struct SPI *spi, int rotation)
 {
     if (rotation == 1) {
-        writecommand(spi, ST7789_MADCTL);
-        writedata(spi, ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB);
+        spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
+        spi_dc_writedata(&spi->bus, ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB);
     }
 }
 
@@ -639,9 +625,9 @@ static void display_init(Context *ctx, term opts)
     spi_config.mode = SPI_MODE;
     spi_config.clock_speed_hz = SPI_CLOCK_HZ;
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->spi_disp, &spi_config);
+    spi_display_init(&spi->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->dc_gpio, ctx->global);
+    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->bus.dc_gpio, ctx->global);
 
     bool reset_configured = true;
     if (!display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &spi->reset_gpio, ctx->global)) {
@@ -676,20 +662,20 @@ static void display_init(Context *ctx, term opts)
 
     // Reset
     if (reset_configured) {
-        spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+        spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
         gpio_set_direction(spi->reset_gpio, GPIO_MODE_OUTPUT);
         gpio_set_level(spi->reset_gpio, 1);
         vTaskDelay(50 / portTICK_PERIOD_MS);
         gpio_set_level(spi->reset_gpio, 0);
         vTaskDelay(50 / portTICK_PERIOD_MS);
         gpio_set_level(spi->reset_gpio, 1);
-        spi_device_release_bus(spi->spi_disp.handle);
+        spi_device_release_bus(spi->bus.spi_disp.handle);
     }
 
-    gpio_set_direction(spi->dc_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
     if (!reset_configured) {
-        writecommand(spi, ST7789_SWRESET);
+        spi_dc_writecommand(&spi->bus, ST7789_SWRESET);
         delay(100);
     }
 
@@ -711,11 +697,11 @@ static void display_init(Context *ctx, term opts)
         set_rotation(spi, spi->rotation);
 
         if (enable_tft_invon) {
-            writecommand(spi, ST7789_INVON);
+            spi_dc_writecommand(&spi->bus, ST7789_INVON);
         }
     }
 
-    writecommand(spi, ST7789_DISPON);
+    spi_dc_writecommand(&spi->bus, ST7789_DISPON);
     delay(120);
 
     struct BacklightGPIOConfig backlight_config;
@@ -728,209 +714,201 @@ static void display_init(Context *ctx, term opts)
 
 static void display_init_alt_gamma_2(struct SPI *spi)
 {
-    writecommand(spi, ST7789_SLPOUT);
+    spi_dc_writecommand(&spi->bus, ST7789_SLPOUT);
     delay(120);
 
-    writecommand(spi, ST7789_NORON);
+    spi_dc_writecommand(&spi->bus, ST7789_NORON);
 
     // - display and color format setting - //
-    writecommand(spi, ST7789_MADCTL);
-    writedata(spi, TFT_MAD_COLOR_ORDER);
+    spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
+    spi_dc_writedata(&spi->bus, TFT_MAD_COLOR_ORDER);
 
-    writecommand(spi, ST7789_COLMOD);
-    writedata(spi, 0x55);
+    spi_dc_writecommand(&spi->bus, ST7789_COLMOD);
+    spi_dc_writedata(&spi->bus, 0x55);
     delay(10);
 
     // - ST7789V frame rate setting - //
-    writecommand(spi, ST7789_PORCTRL);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x00);
-    writedata(spi, 0x33);
-    writedata(spi, 0x33);
+    spi_dc_writecommand(&spi->bus, ST7789_PORCTRL);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x33);
+    spi_dc_writedata(&spi->bus, 0x33);
 
-    writecommand(spi, ST7789_GCTRL);
-    writedata(spi, 0x75);
+    spi_dc_writecommand(&spi->bus, ST7789_GCTRL);
+    spi_dc_writedata(&spi->bus, 0x75);
 
     // - ST7789V power setting - //
-    writecommand(spi, ST7789_VCOMS);
-    writedata(spi, 0x1A);
+    spi_dc_writecommand(&spi->bus, ST7789_VCOMS);
+    spi_dc_writedata(&spi->bus, 0x1A);
 
-    writecommand(spi, ST7789_LCMCTRL);
-    writedata(spi, 0x2C);
+    spi_dc_writecommand(&spi->bus, ST7789_LCMCTRL);
+    spi_dc_writedata(&spi->bus, 0x2C);
 
-    writecommand(spi, ST7789_VDVVRHEN);
-    writedata(spi, 0x01);
+    spi_dc_writecommand(&spi->bus, ST7789_VDVVRHEN);
+    spi_dc_writedata(&spi->bus, 0x01);
 
-    writecommand(spi, ST7789_VRHS);
-    writedata(spi, 0x13);
+    spi_dc_writecommand(&spi->bus, ST7789_VRHS);
+    spi_dc_writedata(&spi->bus, 0x13);
 
-    writecommand(spi, ST7789_VDVSET);
-    writedata(spi, 0x20);
+    spi_dc_writecommand(&spi->bus, ST7789_VDVSET);
+    spi_dc_writedata(&spi->bus, 0x20);
 
-    writecommand(spi, ST7789_FRCTR2);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ST7789_FRCTR2);
+    spi_dc_writedata(&spi->bus, 0x0F);
 
-    writecommand(spi, ST7789_PWCTRL1);
-    writedata(spi, 0xA4);
-    writedata(spi, 0xA1);
+    spi_dc_writecommand(&spi->bus, ST7789_PWCTRL1);
+    spi_dc_writedata(&spi->bus, 0xA4);
+    spi_dc_writedata(&spi->bus, 0xA1);
 
     // - ST7789V gamma setting - //
-    writecommand(spi, ST7789_PVGAMCTRL);
-    writedata(spi, 0xD0);
-    writedata(spi, 0x0D);
-    writedata(spi, 0x14);
-    writedata(spi, 0x0D);
-    writedata(spi, 0x0D);
-    writedata(spi, 0x09);
-    writedata(spi, 0x38);
-    writedata(spi, 0x44);
-    writedata(spi, 0x4E);
-    writedata(spi, 0x3A);
-    writedata(spi, 0x17);
-    writedata(spi, 0x18);
-    writedata(spi, 0x2F);
-    writedata(spi, 0x30);
+    spi_dc_writecommand(&spi->bus, ST7789_PVGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0xD0);
+    spi_dc_writedata(&spi->bus, 0x0D);
+    spi_dc_writedata(&spi->bus, 0x14);
+    spi_dc_writedata(&spi->bus, 0x0D);
+    spi_dc_writedata(&spi->bus, 0x0D);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x38);
+    spi_dc_writedata(&spi->bus, 0x44);
+    spi_dc_writedata(&spi->bus, 0x4E);
+    spi_dc_writedata(&spi->bus, 0x3A);
+    spi_dc_writedata(&spi->bus, 0x17);
+    spi_dc_writedata(&spi->bus, 0x18);
+    spi_dc_writedata(&spi->bus, 0x2F);
+    spi_dc_writedata(&spi->bus, 0x30);
 
-    writecommand(spi, ST7789_NVGAMCTRL);
-    writedata(spi, 0xD0);
-    writedata(spi, 0x09);
-    writedata(spi, 0x0F);
-    writedata(spi, 0x08);
-    writedata(spi, 0x07);
-    writedata(spi, 0x14);
-    writedata(spi, 0x37);
-    writedata(spi, 0x44);
-    writedata(spi, 0x4D);
-    writedata(spi, 0x38);
-    writedata(spi, 0x15);
-    writedata(spi, 0x16);
-    writedata(spi, 0x2C);
-    writedata(spi, 0x3E);
+    spi_dc_writecommand(&spi->bus, ST7789_NVGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0xD0);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x0F);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x14);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x44);
+    spi_dc_writedata(&spi->bus, 0x4D);
+    spi_dc_writedata(&spi->bus, 0x38);
+    spi_dc_writedata(&spi->bus, 0x15);
+    spi_dc_writedata(&spi->bus, 0x16);
+    spi_dc_writedata(&spi->bus, 0x2C);
+    spi_dc_writedata(&spi->bus, 0x3E);
 
-    writecommand(spi, ST7789_CASET);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0xEF); // 239
+    spi_dc_writecommand(&spi->bus, ST7789_CASET);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0xEF); // 239
 
-    writecommand(spi, ST7789_RASET);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x01);
-    writedata(spi, 0x3F); // 319
+    spi_dc_writecommand(&spi->bus, ST7789_RASET);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x01);
+    spi_dc_writedata(&spi->bus, 0x3F); // 319
 }
 
 static void display_init_std(struct SPI *spi)
 {
-    writecommand(spi, ST7789_SLPOUT);
+    spi_dc_writecommand(&spi->bus, ST7789_SLPOUT);
     delay(120);
 
-    writecommand(spi, ST7789_NORON);
+    spi_dc_writecommand(&spi->bus, ST7789_NORON);
 
     // - display and color format setting - //
-    writecommand(spi, ST7789_MADCTL);
-    writedata(spi, TFT_MAD_COLOR_ORDER);
+    spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
+    spi_dc_writedata(&spi->bus, TFT_MAD_COLOR_ORDER);
 
-    writecommand(spi, 0xB6);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x82);
+    spi_dc_writecommand(&spi->bus, 0xB6);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x82);
 
-    writecommand(spi, ST7789_RAMCTRL);
-    writedata(spi, 0x00);
-    writedata(spi, 0xE0);
+    spi_dc_writecommand(&spi->bus, ST7789_RAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0xE0);
 
-    writecommand(spi, ST7789_COLMOD);
-    writedata(spi, 0x55);
+    spi_dc_writecommand(&spi->bus, ST7789_COLMOD);
+    spi_dc_writedata(&spi->bus, 0x55);
     delay(10);
 
     // - ST7789V frame rate setting - //
-    writecommand(spi, ST7789_PORCTRL);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x00);
-    writedata(spi, 0x33);
-    writedata(spi, 0x33);
+    spi_dc_writecommand(&spi->bus, ST7789_PORCTRL);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x33);
+    spi_dc_writedata(&spi->bus, 0x33);
 
-    writecommand(spi, ST7789_GCTRL);
-    writedata(spi, 0x35);
+    spi_dc_writecommand(&spi->bus, ST7789_GCTRL);
+    spi_dc_writedata(&spi->bus, 0x35);
 
     // - ST7789V power setting - //
-    writecommand(spi, ST7789_VCOMS);
-    writedata(spi, 0x28);
+    spi_dc_writecommand(&spi->bus, ST7789_VCOMS);
+    spi_dc_writedata(&spi->bus, 0x28);
 
-    writecommand(spi, ST7789_LCMCTRL);
-    writedata(spi, 0x0C);
+    spi_dc_writecommand(&spi->bus, ST7789_LCMCTRL);
+    spi_dc_writedata(&spi->bus, 0x0C);
 
-    writecommand(spi, ST7789_VDVVRHEN);
-    writedata(spi, 0x01);
-    writedata(spi, 0xFF);
+    spi_dc_writecommand(&spi->bus, ST7789_VDVVRHEN);
+    spi_dc_writedata(&spi->bus, 0x01);
+    spi_dc_writedata(&spi->bus, 0xFF);
 
-    writecommand(spi, ST7789_VRHS);
-    writedata(spi, 0x10);
+    spi_dc_writecommand(&spi->bus, ST7789_VRHS);
+    spi_dc_writedata(&spi->bus, 0x10);
 
-    writecommand(spi, ST7789_VDVSET);
-    writedata(spi, 0x20);
+    spi_dc_writecommand(&spi->bus, ST7789_VDVSET);
+    spi_dc_writedata(&spi->bus, 0x20);
 
-    writecommand(spi, ST7789_FRCTR2);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ST7789_FRCTR2);
+    spi_dc_writedata(&spi->bus, 0x0F);
 
-    writecommand(spi, ST7789_PWCTRL1);
-    writedata(spi, 0xA4);
-    writedata(spi, 0xA1);
+    spi_dc_writecommand(&spi->bus, ST7789_PWCTRL1);
+    spi_dc_writedata(&spi->bus, 0xA4);
+    spi_dc_writedata(&spi->bus, 0xA1);
 
     // - ST7789V gamma setting - //
-    writecommand(spi, ST7789_PVGAMCTRL);
-    writedata(spi, 0xD0);
-    writedata(spi, 0x00);
-    writedata(spi, 0x02);
-    writedata(spi, 0x07);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x28);
-    writedata(spi, 0x32);
-    writedata(spi, 0x44);
-    writedata(spi, 0x42);
-    writedata(spi, 0x06);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x12);
-    writedata(spi, 0x14);
-    writedata(spi, 0x17);
+    spi_dc_writecommand(&spi->bus, ST7789_PVGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0xD0);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x02);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x28);
+    spi_dc_writedata(&spi->bus, 0x32);
+    spi_dc_writedata(&spi->bus, 0x44);
+    spi_dc_writedata(&spi->bus, 0x42);
+    spi_dc_writedata(&spi->bus, 0x06);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x12);
+    spi_dc_writedata(&spi->bus, 0x14);
+    spi_dc_writedata(&spi->bus, 0x17);
 
-    writecommand(spi, ST7789_NVGAMCTRL);
-    writedata(spi, 0xD0);
-    writedata(spi, 0x00);
-    writedata(spi, 0x02);
-    writedata(spi, 0x07);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x28);
-    writedata(spi, 0x31);
-    writedata(spi, 0x54);
-    writedata(spi, 0x47);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x1C);
-    writedata(spi, 0x17);
-    writedata(spi, 0x1B);
-    writedata(spi, 0x1E);
+    spi_dc_writecommand(&spi->bus, ST7789_NVGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0xD0);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x02);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x28);
+    spi_dc_writedata(&spi->bus, 0x31);
+    spi_dc_writedata(&spi->bus, 0x54);
+    spi_dc_writedata(&spi->bus, 0x47);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x1C);
+    spi_dc_writedata(&spi->bus, 0x17);
+    spi_dc_writedata(&spi->bus, 0x1B);
+    spi_dc_writedata(&spi->bus, 0x1E);
 
-    writecommand(spi, ST7789_CASET);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0xEF); // 239
+    spi_dc_writecommand(&spi->bus, ST7789_CASET);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0xEF); // 239
 
-    writecommand(spi, ST7789_RASET);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x01);
-    writedata(spi, 0x3F); // 319
-}
-
-static void writecmddata(struct SPI *spi, uint8_t cmd, const uint8_t *data, size_t length)
-{
-    writecommand(spi, cmd);
-    for (int i = 0; i < length; i++) {
-        writedata(spi, data[i]);
-    }
+    spi_dc_writecommand(&spi->bus, ST7789_RASET);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x01);
+    spi_dc_writedata(&spi->bus, 0x3F); // 319
 }
 
 static void display_init_using_list(struct SPI *spi, term init_list)
@@ -944,7 +922,7 @@ static void display_init_using_list(struct SPI *spi, term init_list)
             if (term_is_integer(cmd_term) && term_is_binary(data_term)) {
                 avm_int_t cmd = term_to_int(cmd_term);
                 const uint8_t *data = (const uint8_t *) term_binary_data(data_term);
-                writecmddata(spi, cmd, data, term_binary_size(data_term));
+                spi_dc_writecmddata(&spi->bus, cmd, data, term_binary_size(data_term));
             } else if ((cmd_term == context_make_atom(spi->ctx, ATOM_STR("\x8", "sleep_ms")))
                 && term_is_integer(data_term)) {
                 delay(term_to_int(data_term));

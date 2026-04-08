@@ -39,6 +39,7 @@ idf_component_register(SRCS
     "memory_display_driver.c"
     "ssd1306_display_driver.c"
     "st7789_display_driver.c"
+    "spi_dc_driver.c"
     "spi_display.c"
     "backlight_gpio.c"
     "image_helpers.c"

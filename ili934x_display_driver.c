@@ -54,6 +54,7 @@
 #include "display_message.h"
 #include "display_task.h"
 #include "image_helpers.h"
+#include "spi_dc_driver.h"
 #include "spi_display.h"
 
 #define SPI_CLOCK_HZ 27000000
@@ -115,8 +116,7 @@ static const char *TAG = "ili934x_display_driver";
 
 struct SPI
 {
-    struct SPIDisplay spi_disp;
-    int dc_gpio;
+    struct SPIDCBus bus;
     int reset_gpio;
 
     avm_int_t rotation;
@@ -182,31 +182,17 @@ static void display_init(Context *ctx, term opts);
 static void display_init42c(struct SPI *spi);
 static void display_init41(struct SPI *spi);
 
-static inline void writedata(struct SPI *spi, uint32_t data)
-{
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 8, data);
-    spi_device_release_bus(spi->spi_disp.handle);
-}
-
-static inline void writecommand(struct SPI *spi, uint8_t command)
-{
-    gpio_set_level(spi->dc_gpio, 0);
-    writedata(spi, command);
-    gpio_set_level(spi->dc_gpio, 1);
-}
-
 static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
 {
-    writecommand(spi, TFT_CASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, TFT_CASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
-    writecommand(spi, TFT_PASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, TFT_PASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 }
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
@@ -467,8 +453,8 @@ static void do_update(Context *ctx, term display_list)
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
     set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    writecommand(spi, TFT_RAMWR);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_dc_writecommand(&spi->bus, TFT_RAMWR);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
 
@@ -483,23 +469,23 @@ static void do_update(Context *ctx, term display_list)
             spi_transaction_t *trans;
             // I did a quick measurement, and most of the time is spent waiting for DMA transaction
             // eg. 23 us spent in draw_x, 188 us spent in spi_device_get_trans_result
-            spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         //NEW CODE
         void *tmp = screen->pixels;
         screen->pixels = screen->pixels_out;
         screen->pixels_out = tmp;
-        spi_display_dmawrite(&spi->spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+        spi_display_dmawrite(&spi->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
         transaction_in_progress = true;
     }
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
     destroy_items(items, len);
 }
@@ -510,7 +496,7 @@ void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const voi
 
     set_screen_paint_area(spi, x, y, width, height);
 
-    writecommand(spi, TFT_RAMWR);
+    spi_dc_writecommand(&spi->bus, TFT_RAMWR);
 
     int dest_size = width * height;
     int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
@@ -519,13 +505,13 @@ void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const voi
 
     uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
 
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
     for (int i = 0; i < chunks; i++) {
         const uint16_t *data_b = data + 1024 * i;
         for (int j = 0; j < 1024; j++) {
             tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
         }
-        spi_display_dmawrite(&spi->spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
+        spi_display_dmawrite(&spi->bus.spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
     }
     int last_chunk_size = dest_size - chunks * 1024;
     if (last_chunk_size) {
@@ -533,9 +519,9 @@ void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const voi
         for (int j = 0; j < 1024; j++) {
             tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
         }
-        spi_display_dmawrite(&spi->spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
+        spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
     }
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
     free(tmpbuf);
 }
@@ -599,8 +585,8 @@ static void process_message(Message *message, Context *ctx)
 static void set_rotation(struct SPI *spi, int rotation)
 {
     if (rotation == 1) {
-        writecommand(spi, TFT_MADCTL);
-        writedata(spi, TFT_MAD_BGR | TFT_MAD_MY | TFT_MAD_MV);
+        spi_dc_writecommand(&spi->bus, TFT_MADCTL);
+        spi_dc_writedata(&spi->bus, TFT_MAD_BGR | TFT_MAD_MY | TFT_MAD_MV);
     }
 }
 
@@ -635,9 +621,9 @@ static void display_init(Context *ctx, term opts)
     spi_config.mode = SPI_MODE;
     spi_config.clock_speed_hz = SPI_CLOCK_HZ;
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->spi_disp, &spi_config);
+    spi_display_init(&spi->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->dc_gpio, ctx->global);
+    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->bus.dc_gpio, ctx->global);
     ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &spi->reset_gpio, ctx->global);
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
@@ -665,18 +651,18 @@ static void display_init(Context *ctx, term opts)
     }
 
     // Reset
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
     gpio_set_direction(spi->reset_gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(spi->reset_gpio, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     gpio_set_level(spi->reset_gpio, 0);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     gpio_set_level(spi->reset_gpio, 1);
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
-    gpio_set_direction(spi->dc_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    writecommand(spi, TFT_SWRST);
+    spi_dc_writecommand(&spi->bus, TFT_SWRST);
 
     vTaskDelay(5 / portTICK_PERIOD_MS);
 
@@ -686,14 +672,14 @@ static void display_init(Context *ctx, term opts)
         display_init41(spi);
     }
 
-    writecommand(spi, ILI9341_SLPOUT);
+    spi_dc_writecommand(&spi->bus, ILI9341_SLPOUT);
 
     vTaskDelay(120 / portTICK_PERIOD_MS);
 
-    writecommand(spi, ILI9341_DISPON);
+    spi_dc_writecommand(&spi->bus, ILI9341_DISPON);
 
     if (enable_tft_invon) {
-        writecommand(spi, TFT_INVON);
+        spi_dc_writecommand(&spi->bus, TFT_INVON);
     }
 
     set_rotation(spi, spi->rotation);
@@ -708,174 +694,174 @@ static void display_init(Context *ctx, term opts)
 
 static void display_init41(struct SPI *spi)
 {
-    writecommand(spi, 0xEF);
-    writedata(spi, 0x03);
-    writedata(spi, 0x80);
-    writedata(spi, 0x02);
+    spi_dc_writecommand(&spi->bus, 0xEF);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x80);
+    spi_dc_writedata(&spi->bus, 0x02);
 
-    writecommand(spi, 0xCF);
-    writedata(spi, 0x00);
-    writedata(spi, 0xC1);
-    writedata(spi, 0x30);
+    spi_dc_writecommand(&spi->bus, 0xCF);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0xC1);
+    spi_dc_writedata(&spi->bus, 0x30);
 
-    writecommand(spi, 0xED);
-    writedata(spi, 0x64);
-    writedata(spi, 0x03);
-    writedata(spi, 0x12);
-    writedata(spi, 0x81);
+    spi_dc_writecommand(&spi->bus, 0xED);
+    spi_dc_writedata(&spi->bus, 0x64);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x12);
+    spi_dc_writedata(&spi->bus, 0x81);
 
-    writecommand(spi, 0xE8);
-    writedata(spi, 0x85);
-    writedata(spi, 0x00);
-    writedata(spi, 0x78);
+    spi_dc_writecommand(&spi->bus, 0xE8);
+    spi_dc_writedata(&spi->bus, 0x85);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x78);
 
-    writecommand(spi, 0xCB);
-    writedata(spi, 0x39);
-    writedata(spi, 0x2C);
-    writedata(spi, 0x00);
-    writedata(spi, 0x34);
-    writedata(spi, 0x02);
+    spi_dc_writecommand(&spi->bus, 0xCB);
+    spi_dc_writedata(&spi->bus, 0x39);
+    spi_dc_writedata(&spi->bus, 0x2C);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x34);
+    spi_dc_writedata(&spi->bus, 0x02);
 
-    writecommand(spi, 0xF7);
-    writedata(spi, 0x20);
+    spi_dc_writecommand(&spi->bus, 0xF7);
+    spi_dc_writedata(&spi->bus, 0x20);
 
-    writecommand(spi, 0xEA);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, 0xEA);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI9341_PWCTR1);
-    writedata(spi, 0x23);
+    spi_dc_writecommand(&spi->bus, ILI9341_PWCTR1);
+    spi_dc_writedata(&spi->bus, 0x23);
 
-    writecommand(spi, ILI9341_PWCTR2);
-    writedata(spi, 0x10);
+    spi_dc_writecommand(&spi->bus, ILI9341_PWCTR2);
+    spi_dc_writedata(&spi->bus, 0x10);
 
-    writecommand(spi, ILI9341_VMCTR1);
-    writedata(spi, 0x3E);
-    writedata(spi, 0x28);
+    spi_dc_writecommand(&spi->bus, ILI9341_VMCTR1);
+    spi_dc_writedata(&spi->bus, 0x3E);
+    spi_dc_writedata(&spi->bus, 0x28);
 
-    writecommand(spi, ILI9341_VMCTR2);
-    writedata(spi, 0x86);
+    spi_dc_writecommand(&spi->bus, ILI9341_VMCTR2);
+    spi_dc_writedata(&spi->bus, 0x86);
 
-    writecommand(spi, ILI9341_MADCTL);
-    writedata(spi, 0x08);
+    spi_dc_writecommand(&spi->bus, ILI9341_MADCTL);
+    spi_dc_writedata(&spi->bus, 0x08);
 
-    writecommand(spi, ILI9341_PIXFMT);
-    writedata(spi, 0x55);
+    spi_dc_writecommand(&spi->bus, ILI9341_PIXFMT);
+    spi_dc_writedata(&spi->bus, 0x55);
 
-    writecommand(spi, ILI9341_FRMCTR1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x13);
+    spi_dc_writecommand(&spi->bus, ILI9341_FRMCTR1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x13);
 
-    writecommand(spi, ILI9341_DFUNCTR);
-    writedata(spi, 0x0A);
-    writedata(spi, 0xA2);
-    writedata(spi, 0x27);
+    spi_dc_writecommand(&spi->bus, ILI9341_DFUNCTR);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0xA2);
+    spi_dc_writedata(&spi->bus, 0x27);
 
-    writecommand(spi, 0xF2);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, 0xF2);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI9341_GAMMASET);
-    writedata(spi, 0x01);
+    spi_dc_writecommand(&spi->bus, ILI9341_GAMMASET);
+    spi_dc_writedata(&spi->bus, 0x01);
 
-    writecommand(spi, ILI9341_GMCTRP1);
-    writedata(spi, 0x0F);
-    writedata(spi, 0x31);
-    writedata(spi, 0x2B);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x08);
-    writedata(spi, 0x4E);
-    writedata(spi, 0xF1);
-    writedata(spi, 0x37);
-    writedata(spi, 0x07);
-    writedata(spi, 0x10);
-    writedata(spi, 0x03);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x09);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI9341_GMCTRP1);
+    spi_dc_writedata(&spi->bus, 0x0F);
+    spi_dc_writedata(&spi->bus, 0x31);
+    spi_dc_writedata(&spi->bus, 0x2B);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x4E);
+    spi_dc_writedata(&spi->bus, 0xF1);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x10);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI9341_GMCTRN1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x14);
-    writedata(spi, 0x03);
-    writedata(spi, 0x11);
-    writedata(spi, 0x07);
-    writedata(spi, 0x31);
-    writedata(spi, 0xC1);
-    writedata(spi, 0x48);
-    writedata(spi, 0x08);
-    writedata(spi, 0x0F);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x31);
-    writedata(spi, 0x36);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ILI9341_GMCTRN1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x14);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x31);
+    spi_dc_writedata(&spi->bus, 0xC1);
+    spi_dc_writedata(&spi->bus, 0x48);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x0F);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x31);
+    spi_dc_writedata(&spi->bus, 0x36);
+    spi_dc_writedata(&spi->bus, 0x0F);
 }
 
 static void display_init42c(struct SPI *spi)
 {
-    writecommand(spi, 0xC8);
-    writedata(spi, 0xFF);
-    writedata(spi, 0x93);
-    writedata(spi, 0x42);
+    spi_dc_writecommand(&spi->bus, 0xC8);
+    spi_dc_writedata(&spi->bus, 0xFF);
+    spi_dc_writedata(&spi->bus, 0x93);
+    spi_dc_writedata(&spi->bus, 0x42);
 
-    writecommand(spi, ILI9341_PWCTR1);
-    writedata(spi, 0x12);
-    writedata(spi, 0x12);
+    spi_dc_writecommand(&spi->bus, ILI9341_PWCTR1);
+    spi_dc_writedata(&spi->bus, 0x12);
+    spi_dc_writedata(&spi->bus, 0x12);
 
-    writecommand(spi, ILI9341_PWCTR2);
-    writedata(spi, 0x03);
+    spi_dc_writecommand(&spi->bus, ILI9341_PWCTR2);
+    spi_dc_writedata(&spi->bus, 0x03);
 
-    writecommand(spi, 0xB0);
-    writedata(spi, 0xE0);
+    spi_dc_writecommand(&spi->bus, 0xB0);
+    spi_dc_writedata(&spi->bus, 0xE0);
 
-    writecommand(spi, 0xF6);
-    writedata(spi, 0x00);
-    writedata(spi, 0x01);
-    writedata(spi, 0x01);
+    spi_dc_writecommand(&spi->bus, 0xF6);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x01);
+    spi_dc_writedata(&spi->bus, 0x01);
 
-    writecommand(spi, ILI9341_MADCTL);
-    writedata(spi, TFT_MAD_MY | TFT_MAD_MV);
+    spi_dc_writecommand(&spi->bus, ILI9341_MADCTL);
+    spi_dc_writedata(&spi->bus, TFT_MAD_MY | TFT_MAD_MV);
 
-    writecommand(spi, ILI9341_PIXFMT);
-    writedata(spi, 0x55);
+    spi_dc_writecommand(&spi->bus, ILI9341_PIXFMT);
+    spi_dc_writedata(&spi->bus, 0x55);
 
-    writecommand(spi, ILI9341_DFUNCTR);
-    writedata(spi, 0x08);
-    writedata(spi, 0x82);
-    writedata(spi, 0x27);
+    spi_dc_writecommand(&spi->bus, ILI9341_DFUNCTR);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x82);
+    spi_dc_writedata(&spi->bus, 0x27);
 
-    writecommand(spi, ILI9341_GMCTRP1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x11);
-    writedata(spi, 0x04);
-    writedata(spi, 0x11);
-    writedata(spi, 0x08);
-    writedata(spi, 0x37);
-    writedata(spi, 0x89);
-    writedata(spi, 0x4C);
-    writedata(spi, 0x06);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x2E);
-    writedata(spi, 0x34);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ILI9341_GMCTRP1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x04);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x89);
+    spi_dc_writedata(&spi->bus, 0x4C);
+    spi_dc_writedata(&spi->bus, 0x06);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x2E);
+    spi_dc_writedata(&spi->bus, 0x34);
+    spi_dc_writedata(&spi->bus, 0x0F);
 
-    writecommand(spi, ILI9341_GMCTRN1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x0B);
-    writedata(spi, 0x11);
-    writedata(spi, 0x05);
-    writedata(spi, 0x13);
-    writedata(spi, 0x09);
-    writedata(spi, 0x33);
-    writedata(spi, 0x67);
-    writedata(spi, 0x48);
-    writedata(spi, 0x07);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x0B);
-    writedata(spi, 0x2E);
-    writedata(spi, 0x33);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ILI9341_GMCTRN1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x0B);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x05);
+    spi_dc_writedata(&spi->bus, 0x13);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x33);
+    spi_dc_writedata(&spi->bus, 0x67);
+    spi_dc_writedata(&spi->bus, 0x48);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x0B);
+    spi_dc_writedata(&spi->bus, 0x2E);
+    spi_dc_writedata(&spi->bus, 0x33);
+    spi_dc_writedata(&spi->bus, 0x0F);
 }

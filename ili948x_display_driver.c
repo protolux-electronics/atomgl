@@ -57,6 +57,7 @@
 #include "display_message.h"
 #include "display_task.h"
 #include "image_helpers.h"
+#include "spi_dc_driver.h"
 #include "spi_display.h"
 
 #define SPI_CLOCK_HZ 27000000
@@ -110,8 +111,7 @@ static const char *TAG = "ili948x_display_driver";
 
 struct SPI
 {
-    struct SPIDisplay spi_disp;
-    int dc_gpio;
+    struct SPIDCBus bus;
     int reset_gpio;
 
     avm_int_t rotation;
@@ -207,31 +207,17 @@ static void display_init(Context *ctx, term opts);
 static void display_init9486(struct SPI *spi);
 static void display_init9488(struct SPI *spi);
 
-static inline void writedata(struct SPI *spi, uint32_t data)
-{
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 8, data);
-    spi_device_release_bus(spi->spi_disp.handle);
-}
-
-static inline void writecommand(struct SPI *spi, uint8_t command)
-{
-    gpio_set_level(spi->dc_gpio, 0);
-    writedata(spi, command);
-    gpio_set_level(spi->dc_gpio, 1);
-}
-
 static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
 {
-    writecommand(spi, ILI948X_CASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, ILI948X_CASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
-    writecommand(spi, ILI948X_PASET);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_dc_writecommand(&spi->bus, ILI948X_PASET);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 }
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
@@ -491,8 +477,8 @@ static void do_update(Context *ctx, term display_list)
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
     set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    writecommand(spi, ILI948X_RAMWR);
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_dc_writecommand(&spi->bus, ILI948X_RAMWR);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
 
@@ -505,7 +491,7 @@ static void do_update(Context *ctx, term display_list)
 
         if (transaction_in_progress) {
             spi_transaction_t *trans;
-            spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         // Swap scanline buffers.
@@ -514,14 +500,14 @@ static void do_update(Context *ctx, term display_list)
         screen->pixels_out = tmp;
 
         if (!spi->is_ili9488) {
-            spi_display_dmawrite(&spi->spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+            spi_display_dmawrite(&spi->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
         } else {
             void *tmpb = screen->bytes;
             screen->bytes = screen->bytes_out;
             screen->bytes_out = tmpb;
 
             rgb565swapped_line_to_rgb888(screen->bytes_out, screen->pixels_out, screen_width);
-            spi_display_dmawrite(&spi->spi_disp, screen_width * 3, screen->bytes_out);
+            spi_display_dmawrite(&spi->bus.spi_disp, screen_width * 3, screen->bytes_out);
         }
 
         transaction_in_progress = true;
@@ -529,10 +515,10 @@ static void do_update(Context *ctx, term display_list)
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
     destroy_items(items, len);
 }
@@ -543,12 +529,12 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
 
     set_screen_paint_area(spi, x, y, width, height);
 
-    writecommand(spi, ILI948X_RAMWR);
+    spi_dc_writecommand(&spi->bus, ILI948X_RAMWR);
 
     int dest_size = width * height;
     int chunks = dest_size / 1024;
 
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     if (!spi->is_ili9488) {
         int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
@@ -559,7 +545,7 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
             for (int j = 0; j < 1024; j++) {
                 tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
             }
-            spi_display_dmawrite(&spi->spi_disp, 1024 * sizeof(uint16_t), tmpbuf);
+            spi_display_dmawrite(&spi->bus.spi_disp, 1024 * sizeof(uint16_t), tmpbuf);
         }
 
         int last_chunk_size = dest_size - chunks * 1024;
@@ -568,7 +554,7 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
             for (int j = 0; j < last_chunk_size; j++) {
                 tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
             }
-            spi_display_dmawrite(&spi->spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
+            spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
         }
 
         free(tmpbuf);
@@ -597,14 +583,14 @@ static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, co
                 tmpbuf[j * 3 + 2] = b8;
             }
 
-            spi_display_dmawrite(&spi->spi_disp, n * 3, tmpbuf);
+            spi_display_dmawrite(&spi->bus.spi_disp, n * 3, tmpbuf);
             i += n;
         }
 
         free(tmpbuf);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 }
 
 static void process_message(Message *message, Context *ctx)
@@ -690,8 +676,8 @@ static void set_rotation(struct SPI *spi, int rotation)
             break;
     }
 
-    writecommand(spi, ILI948X_MADCTL);
-    writedata(spi, madctl);
+    spi_dc_writecommand(&spi->bus, ILI948X_MADCTL);
+    spi_dc_writedata(&spi->bus, madctl);
 }
 
 Context *ili948x_display_create_port(GlobalContext *global, term opts)
@@ -720,9 +706,9 @@ static void display_init(Context *ctx, term opts)
     spi_config.mode = SPI_MODE;
     spi_config.clock_speed_hz = SPI_CLOCK_HZ;
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->spi_disp, &spi_config);
+    spi_display_init(&spi->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->dc_gpio, ctx->global);
+    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->bus.dc_gpio, ctx->global);
     ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &spi->reset_gpio, ctx->global);
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
@@ -797,18 +783,18 @@ static void display_init(Context *ctx, term opts)
     }
 
     // Reset.
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
     gpio_set_direction(spi->reset_gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(spi->reset_gpio, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     gpio_set_level(spi->reset_gpio, 0);
     vTaskDelay(50 / portTICK_PERIOD_MS);
     gpio_set_level(spi->reset_gpio, 1);
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(spi->bus.spi_disp.handle);
 
-    gpio_set_direction(spi->dc_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    writecommand(spi, ILI948X_SWRESET);
+    spi_dc_writecommand(&spi->bus, ILI948X_SWRESET);
 
     vTaskDelay(5 / portTICK_PERIOD_MS);
 
@@ -818,16 +804,16 @@ static void display_init(Context *ctx, term opts)
         display_init9486(spi);
     }
 
-    writecommand(spi, ILI948X_SLPOUT);
+    spi_dc_writecommand(&spi->bus, ILI948X_SLPOUT);
 
     vTaskDelay(120 / portTICK_PERIOD_MS);
 
-    writecommand(spi, ILI948X_DISPON);
+    spi_dc_writecommand(&spi->bus, ILI948X_DISPON);
 
     if (enable_tft_invon) {
-        writecommand(spi, ILI948X_INVON);
+        spi_dc_writecommand(&spi->bus, ILI948X_INVON);
     } else {
-        writecommand(spi, ILI948X_INVOFF);
+        spi_dc_writecommand(&spi->bus, ILI948X_INVOFF);
     }
 
     set_rotation(spi, spi->rotation);
@@ -842,152 +828,152 @@ static void display_init(Context *ctx, term opts)
 
 static void display_init9486(struct SPI *spi)
 {
-    writecommand(spi, ILI948X_IFMODE);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_IFMODE);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_PIXFMT);
-    writedata(spi, 0x55);
+    spi_dc_writecommand(&spi->bus, ILI948X_PIXFMT);
+    spi_dc_writedata(&spi->bus, 0x55);
 
-    writecommand(spi, ILI948X_PWRCTR3);
-    writedata(spi, 0x44);
+    spi_dc_writecommand(&spi->bus, ILI948X_PWRCTR3);
+    spi_dc_writedata(&spi->bus, 0x44);
 
-    writecommand(spi, ILI948X_VMCTR1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_VMCTR1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_PGAMCTRL);
-    writedata(spi, 0x0f);
-    writedata(spi, 0x1f);
-    writedata(spi, 0x1c);
-    writedata(spi, 0x0c);
-    writedata(spi, 0x0f);
-    writedata(spi, 0x08);
-    writedata(spi, 0x48);
-    writedata(spi, 0x98);
-    writedata(spi, 0x37);
-    writedata(spi, 0x0a);
-    writedata(spi, 0x13);
-    writedata(spi, 0x04);
-    writedata(spi, 0x11);
-    writedata(spi, 0x0d);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_PGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x0f);
+    spi_dc_writedata(&spi->bus, 0x1f);
+    spi_dc_writedata(&spi->bus, 0x1c);
+    spi_dc_writedata(&spi->bus, 0x0c);
+    spi_dc_writedata(&spi->bus, 0x0f);
+    spi_dc_writedata(&spi->bus, 0x08);
+    spi_dc_writedata(&spi->bus, 0x48);
+    spi_dc_writedata(&spi->bus, 0x98);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x0a);
+    spi_dc_writedata(&spi->bus, 0x13);
+    spi_dc_writedata(&spi->bus, 0x04);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x0d);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_NGAMCTRL);
-    writedata(spi, 0x0f);
-    writedata(spi, 0x32);
-    writedata(spi, 0x2e);
-    writedata(spi, 0x0b);
-    writedata(spi, 0x0d);
-    writedata(spi, 0x05);
-    writedata(spi, 0x47);
-    writedata(spi, 0x75);
-    writedata(spi, 0x37);
-    writedata(spi, 0x06);
-    writedata(spi, 0x10);
-    writedata(spi, 0x03);
-    writedata(spi, 0x24);
-    writedata(spi, 0x20);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_NGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x0f);
+    spi_dc_writedata(&spi->bus, 0x32);
+    spi_dc_writedata(&spi->bus, 0x2e);
+    spi_dc_writedata(&spi->bus, 0x0b);
+    spi_dc_writedata(&spi->bus, 0x0d);
+    spi_dc_writedata(&spi->bus, 0x05);
+    spi_dc_writedata(&spi->bus, 0x47);
+    spi_dc_writedata(&spi->bus, 0x75);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x06);
+    spi_dc_writedata(&spi->bus, 0x10);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x24);
+    spi_dc_writedata(&spi->bus, 0x20);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_DGAMCTRL);
-    writedata(spi, 0x0f);
-    writedata(spi, 0x32);
-    writedata(spi, 0x2e);
-    writedata(spi, 0x0b);
-    writedata(spi, 0x0d);
-    writedata(spi, 0x05);
-    writedata(spi, 0x47);
-    writedata(spi, 0x75);
-    writedata(spi, 0x37);
-    writedata(spi, 0x06);
-    writedata(spi, 0x10);
-    writedata(spi, 0x03);
-    writedata(spi, 0x24);
-    writedata(spi, 0x20);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_DGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x0f);
+    spi_dc_writedata(&spi->bus, 0x32);
+    spi_dc_writedata(&spi->bus, 0x2e);
+    spi_dc_writedata(&spi->bus, 0x0b);
+    spi_dc_writedata(&spi->bus, 0x0d);
+    spi_dc_writedata(&spi->bus, 0x05);
+    spi_dc_writedata(&spi->bus, 0x47);
+    spi_dc_writedata(&spi->bus, 0x75);
+    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_writedata(&spi->bus, 0x06);
+    spi_dc_writedata(&spi->bus, 0x10);
+    spi_dc_writedata(&spi->bus, 0x03);
+    spi_dc_writedata(&spi->bus, 0x24);
+    spi_dc_writedata(&spi->bus, 0x20);
+    spi_dc_writedata(&spi->bus, 0x00);
 }
 
 static void display_init9488(struct SPI *spi)
 {
     // ILI9488: RGB666 over SPI (3 bytes/pixel).
-    writecommand(spi, ILI948X_IFMODE);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_IFMODE);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_ADJCTRL3);
-    writedata(spi, 0xA9);
-    writedata(spi, 0x51);
-    writedata(spi, 0x2C);
-    writedata(spi, 0x82);
+    spi_dc_writecommand(&spi->bus, ILI948X_ADJCTRL3);
+    spi_dc_writedata(&spi->bus, 0xA9);
+    spi_dc_writedata(&spi->bus, 0x51);
+    spi_dc_writedata(&spi->bus, 0x2C);
+    spi_dc_writedata(&spi->bus, 0x82);
 
-    writecommand(spi, ILI948X_PWRCTR1);
-    writedata(spi, 0x11);
-    writedata(spi, 0x09);
+    spi_dc_writecommand(&spi->bus, ILI948X_PWRCTR1);
+    spi_dc_writedata(&spi->bus, 0x11);
+    spi_dc_writedata(&spi->bus, 0x09);
 
-    writecommand(spi, ILI948X_PWRCTR2);
-    writedata(spi, 0x41);
+    spi_dc_writecommand(&spi->bus, ILI948X_PWRCTR2);
+    spi_dc_writedata(&spi->bus, 0x41);
 
-    writecommand(spi, ILI948X_VMCTR1);
-    writedata(spi, 0x00);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x80);
+    spi_dc_writecommand(&spi->bus, ILI948X_VMCTR1);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x80);
 
-    writecommand(spi, ILI948X_FRMCTR1);
-    writedata(spi, 0xB0);
-    writedata(spi, 0x11);
+    spi_dc_writecommand(&spi->bus, ILI948X_FRMCTR1);
+    spi_dc_writedata(&spi->bus, 0xB0);
+    spi_dc_writedata(&spi->bus, 0x11);
 
-    writecommand(spi, ILI948X_INVCTR);
-    writedata(spi, 0x02);
+    spi_dc_writecommand(&spi->bus, ILI948X_INVCTR);
+    spi_dc_writedata(&spi->bus, 0x02);
 
-    writecommand(spi, ILI948X_DFUNCTR);
-    writedata(spi, 0x02);
-    writedata(spi, 0x02);
+    spi_dc_writecommand(&spi->bus, ILI948X_DFUNCTR);
+    spi_dc_writedata(&spi->bus, 0x02);
+    spi_dc_writedata(&spi->bus, 0x02);
 
-    writecommand(spi, ILI948X_ETMOD);
-    writedata(spi, 0xC6);
+    spi_dc_writecommand(&spi->bus, ILI948X_ETMOD);
+    spi_dc_writedata(&spi->bus, 0xC6);
 
-    writecommand(spi, ILI948X_HS_LANES_CTRL);
-    writedata(spi, 0x00);
-    writedata(spi, 0x04);
+    spi_dc_writecommand(&spi->bus, ILI948X_HS_LANES_CTRL);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x04);
 
-    writecommand(spi, ILI948X_IMAGE_FUNCTION);
-    writedata(spi, 0x00);
+    spi_dc_writecommand(&spi->bus, ILI948X_IMAGE_FUNCTION);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    writecommand(spi, ILI948X_PIXFMT);
-    writedata(spi, 0x66);
+    spi_dc_writecommand(&spi->bus, ILI948X_PIXFMT);
+    spi_dc_writedata(&spi->bus, 0x66);
 
-    writecommand(spi, ILI948X_PGAMCTRL);
-    writedata(spi, 0x00);
-    writedata(spi, 0x07);
-    writedata(spi, 0x10);
-    writedata(spi, 0x09);
-    writedata(spi, 0x17);
-    writedata(spi, 0x0B);
-    writedata(spi, 0x41);
-    writedata(spi, 0x89);
-    writedata(spi, 0x4B);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x0C);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x18);
-    writedata(spi, 0x1B);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ILI948X_PGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x07);
+    spi_dc_writedata(&spi->bus, 0x10);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x17);
+    spi_dc_writedata(&spi->bus, 0x0B);
+    spi_dc_writedata(&spi->bus, 0x41);
+    spi_dc_writedata(&spi->bus, 0x89);
+    spi_dc_writedata(&spi->bus, 0x4B);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x0C);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x18);
+    spi_dc_writedata(&spi->bus, 0x1B);
+    spi_dc_writedata(&spi->bus, 0x0F);
 
-    writecommand(spi, ILI948X_NGAMCTRL);
-    writedata(spi, 0x00);
-    writedata(spi, 0x17);
-    writedata(spi, 0x1A);
-    writedata(spi, 0x04);
-    writedata(spi, 0x0E);
-    writedata(spi, 0x06);
-    writedata(spi, 0x2F);
-    writedata(spi, 0x45);
-    writedata(spi, 0x43);
-    writedata(spi, 0x02);
-    writedata(spi, 0x0A);
-    writedata(spi, 0x09);
-    writedata(spi, 0x32);
-    writedata(spi, 0x36);
-    writedata(spi, 0x0F);
+    spi_dc_writecommand(&spi->bus, ILI948X_NGAMCTRL);
+    spi_dc_writedata(&spi->bus, 0x00);
+    spi_dc_writedata(&spi->bus, 0x17);
+    spi_dc_writedata(&spi->bus, 0x1A);
+    spi_dc_writedata(&spi->bus, 0x04);
+    spi_dc_writedata(&spi->bus, 0x0E);
+    spi_dc_writedata(&spi->bus, 0x06);
+    spi_dc_writedata(&spi->bus, 0x2F);
+    spi_dc_writedata(&spi->bus, 0x45);
+    spi_dc_writedata(&spi->bus, 0x43);
+    spi_dc_writedata(&spi->bus, 0x02);
+    spi_dc_writedata(&spi->bus, 0x0A);
+    spi_dc_writedata(&spi->bus, 0x09);
+    spi_dc_writedata(&spi->bus, 0x32);
+    spi_dc_writedata(&spi->bus, 0x36);
+    spi_dc_writedata(&spi->bus, 0x0F);
 }
