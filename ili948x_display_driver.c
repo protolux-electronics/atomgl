@@ -53,6 +53,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_commands.h"
 #include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
@@ -66,27 +67,6 @@
 #define SPI_MODE 0
 
 #define CHAR_WIDTH 8
-
-#define ILI948X_SWRESET 0x01
-#define ILI948X_SLPIN 0x10
-#define ILI948X_SLPOUT 0x11
-#define ILI948X_DISPOFF 0x28
-#define ILI948X_DISPON 0x29
-
-#define ILI948X_CASET 0x2A
-#define ILI948X_PASET 0x2B
-#define ILI948X_RAMWR 0x2C
-
-#define ILI948X_MADCTL 0x36
-#define ILI948X_MAD_MY 0x80
-#define ILI948X_MAD_MX 0x40
-#define ILI948X_MAD_MV 0x20
-#define ILI948X_MAD_BGR 0x08
-
-#define ILI948X_INVOFF 0x20
-#define ILI948X_INVON 0x21
-
-#define ILI948X_PIXFMT 0x3A
 
 #define ILI948X_IFMODE 0xB0
 #define ILI948X_FRMCTR1 0xB1
@@ -155,19 +135,6 @@ static void display_init(Context *ctx, term opts);
 
 static void display_init9486(struct SPI *spi);
 static void display_init9488(struct SPI *spi);
-
-static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
-{
-    spi_dc_writecommand(&spi->bus, ILI948X_CASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-
-    spi_dc_writecommand(&spi->bus, ILI948X_PASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-}
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
 {
@@ -425,8 +392,8 @@ static void do_update(Context *ctx, term display_list)
     int screen_height = screen->h;
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
-    set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    spi_dc_writecommand(&spi->bus, ILI948X_RAMWR);
+    dcs_lcd_set_paint_area(&spi->bus, screen, 0, 0, screen_width, screen_height);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_RAMWR);
     spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
@@ -472,76 +439,6 @@ static void do_update(Context *ctx, term display_list)
     destroy_items(items, len);
 }
 
-static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const void *imgdata)
-{
-    const uint16_t *data = imgdata;
-
-    set_screen_paint_area(spi, x, y, width, height);
-
-    spi_dc_writecommand(&spi->bus, ILI948X_RAMWR);
-
-    int dest_size = width * height;
-    int chunks = dest_size / 1024;
-
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-
-    if (!spi->is_ili9488) {
-        int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
-        uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
-
-        for (int i = 0; i < chunks; i++) {
-            const uint16_t *data_b = data + 1024 * i;
-            for (int j = 0; j < 1024; j++) {
-                tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-            }
-            spi_display_dmawrite(&spi->bus.spi_disp, 1024 * sizeof(uint16_t), tmpbuf);
-        }
-
-        int last_chunk_size = dest_size - chunks * 1024;
-        if (last_chunk_size) {
-            const uint16_t *data_b = data + chunks * 1024;
-            for (int j = 0; j < last_chunk_size; j++) {
-                tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-            }
-            spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
-        }
-
-        free(tmpbuf);
-
-    } else {
-        // ILI9488: RGB565 -> RGB888 (3 bytes/pixel).
-        const int chunk_pixels = 512;
-        uint8_t *tmpbuf = heap_caps_malloc(chunk_pixels * 3, MALLOC_CAP_DMA);
-
-        int i = 0;
-        while (i < dest_size) {
-            int n = (dest_size - i > chunk_pixels) ? chunk_pixels : (dest_size - i);
-
-            for (int j = 0; j < n; j++) {
-                uint16_t px = data[i + j];
-                uint8_t r5 = (px >> 11) & 0x1F;
-                uint8_t g6 = (px >> 5) & 0x3F;
-                uint8_t b5 = (px >> 0) & 0x1F;
-
-                uint8_t r8 = (r5 << 3) | (r5 >> 2);
-                uint8_t g8 = (g6 << 2) | (g6 >> 4);
-                uint8_t b8 = (b5 << 3) | (b5 >> 2);
-
-                tmpbuf[j * 3 + 0] = r8;
-                tmpbuf[j * 3 + 1] = g8;
-                tmpbuf[j * 3 + 2] = b8;
-            }
-
-            spi_display_dmawrite(&spi->bus.spi_disp, n * 3, tmpbuf);
-            i += n;
-        }
-
-        free(tmpbuf);
-    }
-
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-}
-
 static void process_message(Message *message, Context *ctx)
 {
     GenMessage gen_message;
@@ -574,7 +471,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        draw_buffer(spi, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&spi->bus, screen, spi->is_ili9488 ? 3 : 2, x, y, width, height, data);
 
         // draw_buffer is fire-and-forget.
         return;
@@ -604,28 +501,28 @@ static void set_rotation(struct SPI *spi, int rotation)
     uint8_t madctl = 0;
 
     if (spi->madctl_bgr) {
-        madctl |= ILI948X_MAD_BGR;
+        madctl |= DCS_LCD_MAD_BGR;
     }
 
     switch (rotation & 3) {
         case 0:
-            madctl |= ILI948X_MAD_MX;
+            madctl |= DCS_LCD_MAD_MX;
             break;
 
         case 1:
-            madctl |= ILI948X_MAD_MV;
+            madctl |= DCS_LCD_MAD_MV;
             break;
 
         case 2:
-            madctl |= ILI948X_MAD_MY;
+            madctl |= DCS_LCD_MAD_MY;
             break;
 
         case 3:
-            madctl |= ILI948X_MAD_MX | ILI948X_MAD_MY | ILI948X_MAD_MV;
+            madctl |= DCS_LCD_MAD_MX | DCS_LCD_MAD_MY | DCS_LCD_MAD_MV;
             break;
     }
 
-    spi_dc_writecommand(&spi->bus, ILI948X_MADCTL);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
     spi_dc_writedata(&spi->bus, madctl);
 }
 
@@ -639,7 +536,7 @@ Context *ili948x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct DCSLCDScreen));
+    screen = calloc(1, sizeof(struct DCSLCDScreen));
 
     struct SPI *spi = malloc(sizeof(struct SPI));
 
@@ -743,7 +640,7 @@ static void display_init(Context *ctx, term opts)
 
     gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    spi_dc_writecommand(&spi->bus, ILI948X_SWRESET);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SWRESET);
 
     vTaskDelay(5 / portTICK_PERIOD_MS);
 
@@ -753,16 +650,16 @@ static void display_init(Context *ctx, term opts)
         display_init9486(spi);
     }
 
-    spi_dc_writecommand(&spi->bus, ILI948X_SLPOUT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SLPOUT);
 
     vTaskDelay(120 / portTICK_PERIOD_MS);
 
-    spi_dc_writecommand(&spi->bus, ILI948X_DISPON);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_DISPON);
 
     if (enable_tft_invon) {
-        spi_dc_writecommand(&spi->bus, ILI948X_INVON);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_INVON);
     } else {
-        spi_dc_writecommand(&spi->bus, ILI948X_INVOFF);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_INVOFF);
     }
 
     set_rotation(spi, spi->rotation);
@@ -780,7 +677,7 @@ static void display_init9486(struct SPI *spi)
     spi_dc_writecommand(&spi->bus, ILI948X_IFMODE);
     spi_dc_writedata(&spi->bus, 0x00);
 
-    spi_dc_writecommand(&spi->bus, ILI948X_PIXFMT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x55);
 
     spi_dc_writecommand(&spi->bus, ILI948X_PWRCTR3);
@@ -889,7 +786,7 @@ static void display_init9488(struct SPI *spi)
     spi_dc_writecommand(&spi->bus, ILI948X_IMAGE_FUNCTION);
     spi_dc_writedata(&spi->bus, 0x00);
 
-    spi_dc_writecommand(&spi->bus, ILI948X_PIXFMT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x66);
 
     spi_dc_writecommand(&spi->bus, ILI948X_PGAMCTRL);

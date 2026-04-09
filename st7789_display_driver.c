@@ -50,6 +50,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_commands.h"
 #include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
@@ -65,18 +66,6 @@
 
 #define CHAR_WIDTH 8
 
-#define ST7789_SWRESET 0x01
-#define ST7789_SLPIN 0x10
-#define ST7789_SLPOUT 0x11
-#define ST7789_NORON 0x13
-#define ST7789_INVON 0x21
-#define ST7789_DISPOFF 0x28
-#define ST7789_DISPON 0x29
-#define ST7789_CASET 0x2A
-#define ST7789_RASET 0x2B
-#define ST7789_RAMWR 0x2C
-#define ST7789_MADCTL 0x36
-#define ST7789_COLMOD 0x3A
 #define ST7789_RAMCTRL 0xB0
 #define ST7789_PORCTRL 0xB2
 #define ST7789_GCTRL 0xB7
@@ -89,17 +78,6 @@
 #define ST7789_PWCTRL1 0xD0
 #define ST7789_PVGAMCTRL 0xE0
 #define ST7789_NVGAMCTRL 0xE1
-
-// rotation
-#define ST7789_MADCTL_MY 0x80
-#define ST7789_MADCTL_MX 0x40
-#define ST7789_MADCTL_MV 0x20
-#define ST7789_MADCTL_ML 0x10
-#define ST7789_MADCTL_RGB 0x00
-
-#define TFT_MAD_RGB 0x00
-#define TFT_MAD_BGR 0x08
-#define TFT_MAD_COLOR_ORDER TFT_MAD_RGB
 
 #include "font_data.h"
 
@@ -131,22 +109,6 @@ static void display_init(Context *ctx, term opts);
 static void display_init_alt_gamma_2(struct SPI *spi);
 static void display_init_std(struct SPI *spi);
 static void display_init_using_list(struct SPI *spi, term init_list);
-
-static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
-{
-    x += screen->x_offset;
-    y += screen->y_offset;
-
-    spi_dc_writecommand(&spi->bus, ST7789_CASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-
-    spi_dc_writecommand(&spi->bus, ST7789_RASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-}
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
 {
@@ -405,8 +367,8 @@ static void do_update(Context *ctx, term display_list)
     int screen_height = screen->h;
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
-    set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    spi_dc_writecommand(&spi->bus, ST7789_RAMWR);
+    dcs_lcd_set_paint_area(&spi->bus, screen, 0, 0, screen_width, screen_height);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_RAMWR);
     spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
@@ -443,42 +405,6 @@ static void do_update(Context *ctx, term display_list)
     destroy_items(items, len);
 }
 
-static void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const void *imgdata)
-{
-    const uint16_t *data = imgdata;
-
-    set_screen_paint_area(spi, x, y, width, height);
-
-    spi_dc_writecommand(&spi->bus, ST7789_RAMWR);
-
-    int dest_size = width * height;
-    int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
-
-    int chunks = dest_size / 1024;
-
-    uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
-
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    for (int i = 0; i < chunks; i++) {
-        const uint16_t *data_b = data + 1024 * i;
-        for (int j = 0; j < 1024; j++) {
-            tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-        }
-        spi_display_dmawrite(&spi->bus.spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
-    }
-    int last_chunk_size = dest_size - chunks * 1024;
-    if (last_chunk_size) {
-        const uint16_t *data_b = data + chunks * 1024;
-        for (int j = 0; j < 1024; j++) {
-            tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-        }
-        spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
-    }
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-
-    free(tmpbuf);
-}
-
 static void process_message(Message *message, Context *ctx)
 {
     GenMessage gen_message;
@@ -511,7 +437,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        draw_buffer(spi, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&spi->bus, screen, 2, x, y, width, height, data);
 
         // draw_buffer is a kind of cast, no need to reply
         return;
@@ -538,8 +464,8 @@ static void process_message(Message *message, Context *ctx)
 static void set_rotation(struct SPI *spi, int rotation)
 {
     if (rotation == 1) {
-        spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
-        spi_dc_writedata(&spi->bus, ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
+        spi_dc_writedata(&spi->bus, DCS_LCD_MAD_MX | DCS_LCD_MAD_MV);
     }
 }
 
@@ -558,7 +484,7 @@ static void display_init(Context *ctx, term opts)
     term height_term = interop_kv_get_value_default(
         opts, ATOM_STR("\x6", "height"), term_from_int(240), ctx->global);
 
-    screen = malloc(sizeof(struct DCSLCDScreen));
+    screen = calloc(1, sizeof(struct DCSLCDScreen));
     screen->w = term_to_int(width_term);
     screen->h = term_to_int(height_term);
     screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
@@ -628,7 +554,7 @@ static void display_init(Context *ctx, term opts)
     gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
     if (!reset_configured) {
-        spi_dc_writecommand(&spi->bus, ST7789_SWRESET);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_SWRESET);
         delay(100);
     }
 
@@ -650,11 +576,11 @@ static void display_init(Context *ctx, term opts)
         set_rotation(spi, spi->rotation);
 
         if (enable_tft_invon) {
-            spi_dc_writecommand(&spi->bus, ST7789_INVON);
+            spi_dc_writecommand(&spi->bus, DCS_LCD_INVON);
         }
     }
 
-    spi_dc_writecommand(&spi->bus, ST7789_DISPON);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_DISPON);
     delay(120);
 
     struct BacklightGPIOConfig backlight_config;
@@ -667,16 +593,16 @@ static void display_init(Context *ctx, term opts)
 
 static void display_init_alt_gamma_2(struct SPI *spi)
 {
-    spi_dc_writecommand(&spi->bus, ST7789_SLPOUT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SLPOUT);
     delay(120);
 
-    spi_dc_writecommand(&spi->bus, ST7789_NORON);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_NORON);
 
     // - display and color format setting - //
-    spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
-    spi_dc_writedata(&spi->bus, TFT_MAD_COLOR_ORDER);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
+    spi_dc_writedata(&spi->bus, 0x00);
 
-    spi_dc_writecommand(&spi->bus, ST7789_COLMOD);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x55);
     delay(10);
 
@@ -747,13 +673,13 @@ static void display_init_alt_gamma_2(struct SPI *spi)
     spi_dc_writedata(&spi->bus, 0x2C);
     spi_dc_writedata(&spi->bus, 0x3E);
 
-    spi_dc_writecommand(&spi->bus, ST7789_CASET);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_CASET);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0xEF); // 239
 
-    spi_dc_writecommand(&spi->bus, ST7789_RASET);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_PASET);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x01);
@@ -762,14 +688,14 @@ static void display_init_alt_gamma_2(struct SPI *spi)
 
 static void display_init_std(struct SPI *spi)
 {
-    spi_dc_writecommand(&spi->bus, ST7789_SLPOUT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SLPOUT);
     delay(120);
 
-    spi_dc_writecommand(&spi->bus, ST7789_NORON);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_NORON);
 
     // - display and color format setting - //
-    spi_dc_writecommand(&spi->bus, ST7789_MADCTL);
-    spi_dc_writedata(&spi->bus, TFT_MAD_COLOR_ORDER);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
+    spi_dc_writedata(&spi->bus, 0x00);
 
     spi_dc_writecommand(&spi->bus, 0xB6);
     spi_dc_writedata(&spi->bus, 0x0A);
@@ -779,7 +705,7 @@ static void display_init_std(struct SPI *spi)
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0xE0);
 
-    spi_dc_writecommand(&spi->bus, ST7789_COLMOD);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x55);
     delay(10);
 
@@ -851,13 +777,13 @@ static void display_init_std(struct SPI *spi)
     spi_dc_writedata(&spi->bus, 0x1B);
     spi_dc_writedata(&spi->bus, 0x1E);
 
-    spi_dc_writecommand(&spi->bus, ST7789_CASET);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_CASET);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0xEF); // 239
 
-    spi_dc_writecommand(&spi->bus, ST7789_RASET);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_PASET);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x00);
     spi_dc_writedata(&spi->bus, 0x01);

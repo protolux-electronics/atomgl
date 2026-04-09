@@ -50,6 +50,7 @@
 
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
+#include "dcs_lcd_commands.h"
 #include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
@@ -64,22 +65,7 @@
 
 #define CHAR_WIDTH 8
 
-#define ILI9341_SLPIN 0x10
-#define ILI9341_SLPOUT 0x11
-#define ILI9341_PTLON 0x12
-#define ILI9341_NORON 0x13
-
-#define ILI9341_INVOFF 0x20
-#define ILI9341_INVON 0x21
 #define ILI9341_GAMMASET 0x26
-#define ILI9341_DISPOFF 0x28
-#define ILI9341_DISPON 0x29
-
-#define ILI9341_PTLAR 0x30
-#define ILI9341_VSCRDEF 0x33
-#define ILI9341_MADCTL 0x36
-#define ILI9341_VSCRSADD 0x37
-#define ILI9341_PIXFMT 0x3A
 
 #define ILI9341_FRMCTR1 0xB1
 #define ILI9341_FRMCTR2 0xB2
@@ -97,20 +83,6 @@
 
 #define ILI9341_GMCTRP1 0xE0
 #define ILI9341_GMCTRN1 0xE1
-
-#define TFT_SWRST 0x01
-#define TFT_CASET 0x2A
-#define TFT_PASET 0x2B
-#define TFT_RAMWR 0x2C
-
-#define TFT_MADCTL 0x36
-#define TFT_MAD_MY 0x80
-#define TFT_MAD_MX 0x40
-#define TFT_MAD_MV 0x20
-#define TFT_MAD_BGR 0x08
-
-#define TFT_INVOFF 0x20
-#define TFT_INVON 0x21
 
 #include "font_data.h"
 
@@ -136,19 +108,6 @@ static struct DCSLCDScreen *screen;
 static void display_init(Context *ctx, term opts);
 static void display_init42c(struct SPI *spi);
 static void display_init41(struct SPI *spi);
-
-static inline void set_screen_paint_area(struct SPI *spi, int x, int y, int width, int height)
-{
-    spi_dc_writecommand(&spi->bus, TFT_CASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (x << 16) | ((x + width) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-
-    spi_dc_writecommand(&spi->bus, TFT_PASET);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    spi_display_write(&spi->bus.spi_disp, 32, (y << 16) | ((y + height) - 1));
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-}
 
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
 {
@@ -407,8 +366,8 @@ static void do_update(Context *ctx, term display_list)
     int screen_height = screen->h;
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
-    set_screen_paint_area(spi, 0, 0, screen_width, screen_height);
-    spi_dc_writecommand(&spi->bus, TFT_RAMWR);
+    dcs_lcd_set_paint_area(&spi->bus, screen, 0, 0, screen_width, screen_height);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_RAMWR);
     spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
@@ -445,42 +404,6 @@ static void do_update(Context *ctx, term display_list)
     destroy_items(items, len);
 }
 
-void draw_buffer(struct SPI *spi, int x, int y, int width, int height, const void *imgdata)
-{
-    const uint16_t *data = imgdata;
-
-    set_screen_paint_area(spi, x, y, width, height);
-
-    spi_dc_writecommand(&spi->bus, TFT_RAMWR);
-
-    int dest_size = width * height;
-    int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
-
-    int chunks = dest_size / 1024;
-
-    uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
-
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    for (int i = 0; i < chunks; i++) {
-        const uint16_t *data_b = data + 1024 * i;
-        for (int j = 0; j < 1024; j++) {
-            tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-        }
-        spi_display_dmawrite(&spi->bus.spi_disp, buf_pixel_size * sizeof(uint16_t), tmpbuf);
-    }
-    int last_chunk_size = dest_size - chunks * 1024;
-    if (last_chunk_size) {
-        const uint16_t *data_b = data + chunks * 1024;
-        for (int j = 0; j < 1024; j++) {
-            tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
-        }
-        spi_display_dmawrite(&spi->bus.spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
-    }
-    spi_device_release_bus(spi->bus.spi_disp.handle);
-
-    free(tmpbuf);
-}
-
 static void process_message(Message *message, Context *ctx)
 {
     GenMessage gen_message;
@@ -513,7 +436,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        draw_buffer(spi, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&spi->bus, screen, 2, x, y, width, height, data);
 
         // draw_buffer is a kind of cast, no need to reply
         return;
@@ -540,8 +463,8 @@ static void process_message(Message *message, Context *ctx)
 static void set_rotation(struct SPI *spi, int rotation)
 {
     if (rotation == 1) {
-        spi_dc_writecommand(&spi->bus, TFT_MADCTL);
-        spi_dc_writedata(&spi->bus, TFT_MAD_BGR | TFT_MAD_MY | TFT_MAD_MV);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
+        spi_dc_writedata(&spi->bus, DCS_LCD_MAD_BGR | DCS_LCD_MAD_MY | DCS_LCD_MAD_MV);
     }
 }
 
@@ -555,7 +478,7 @@ Context *ili934x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct DCSLCDScreen));
+    screen = calloc(1, sizeof(struct DCSLCDScreen));
     // FIXME: hardcoded width and height
     screen->w = 320;
     screen->h = 240;
@@ -617,7 +540,7 @@ static void display_init(Context *ctx, term opts)
 
     gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    spi_dc_writecommand(&spi->bus, TFT_SWRST);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SWRESET);
 
     vTaskDelay(5 / portTICK_PERIOD_MS);
 
@@ -627,14 +550,14 @@ static void display_init(Context *ctx, term opts)
         display_init41(spi);
     }
 
-    spi_dc_writecommand(&spi->bus, ILI9341_SLPOUT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_SLPOUT);
 
     vTaskDelay(120 / portTICK_PERIOD_MS);
 
-    spi_dc_writecommand(&spi->bus, ILI9341_DISPON);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_DISPON);
 
     if (enable_tft_invon) {
-        spi_dc_writecommand(&spi->bus, TFT_INVON);
+        spi_dc_writecommand(&spi->bus, DCS_LCD_INVON);
     }
 
     set_rotation(spi, spi->rotation);
@@ -697,10 +620,10 @@ static void display_init41(struct SPI *spi)
     spi_dc_writecommand(&spi->bus, ILI9341_VMCTR2);
     spi_dc_writedata(&spi->bus, 0x86);
 
-    spi_dc_writecommand(&spi->bus, ILI9341_MADCTL);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
     spi_dc_writedata(&spi->bus, 0x08);
 
-    spi_dc_writecommand(&spi->bus, ILI9341_PIXFMT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x55);
 
     spi_dc_writecommand(&spi->bus, ILI9341_FRMCTR1);
@@ -775,10 +698,10 @@ static void display_init42c(struct SPI *spi)
     spi_dc_writedata(&spi->bus, 0x01);
     spi_dc_writedata(&spi->bus, 0x01);
 
-    spi_dc_writecommand(&spi->bus, ILI9341_MADCTL);
-    spi_dc_writedata(&spi->bus, TFT_MAD_MY | TFT_MAD_MV);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_MADCTL);
+    spi_dc_writedata(&spi->bus, DCS_LCD_MAD_MY | DCS_LCD_MAD_MV);
 
-    spi_dc_writecommand(&spi->bus, ILI9341_PIXFMT);
+    spi_dc_writecommand(&spi->bus, DCS_LCD_COLMOD);
     spi_dc_writedata(&spi->bus, 0x55);
 
     spi_dc_writecommand(&spi->bus, ILI9341_DFUNCTR);

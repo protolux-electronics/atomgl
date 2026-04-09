@@ -1,0 +1,57 @@
+/*
+ * This file is part of AtomGL.
+ *
+ * Copyright 2020-2026 Davide Bettio <davide@uninstall.it>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef _DCS_LCD_COMMANDS_H_
+#define _DCS_LCD_COMMANDS_H_
+
+#include "dcs_lcd_screen.h"
+#include "spi_dc_driver.h"
+
+// Generic MIPI DCS command set (subset used by AtomGL DCS LCD drivers).
+// Vendor-specific init sequence bytes (ILI9341_FRMCTR1, ST7789_PORCTRL,
+// ILI948X_HS_LANES_CTRL, etc.) stay in each driver's header block.
+#define DCS_LCD_SWRESET 0x01
+#define DCS_LCD_SLPIN   0x10
+#define DCS_LCD_SLPOUT  0x11
+#define DCS_LCD_NORON   0x13
+#define DCS_LCD_INVOFF  0x20
+#define DCS_LCD_INVON   0x21
+#define DCS_LCD_DISPOFF 0x28
+#define DCS_LCD_DISPON  0x29
+#define DCS_LCD_CASET   0x2A
+#define DCS_LCD_PASET   0x2B
+#define DCS_LCD_RAMWR   0x2C
+#define DCS_LCD_MADCTL  0x36
+#define DCS_LCD_COLMOD  0x3A
+
+// MADCTL bit positions.
+#define DCS_LCD_MAD_MY  0x80
+#define DCS_LCD_MAD_MX  0x40
+#define DCS_LCD_MAD_MV  0x20
+#define DCS_LCD_MAD_ML  0x10
+#define DCS_LCD_MAD_BGR 0x08
+
+void dcs_lcd_set_paint_area(struct SPIDCBus *bus, const struct DCSLCDScreen *screen,
+    int x, int y, int width, int height);
+
+void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen,
+    int pixel_bytes, int x, int y, int width, int height, const void *imgdata);
+
+#endif

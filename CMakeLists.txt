@@ -27,6 +27,7 @@ else()
 endif()
 
 idf_component_register(SRCS
+    "dcs_lcd_commands.c"
     "display_common.c"
     "display_driver.c"
     "display_items.c"
