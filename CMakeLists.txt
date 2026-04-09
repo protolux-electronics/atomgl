@@ -28,6 +28,7 @@ endif()
 
 idf_component_register(SRCS
     "dcs_lcd_commands.c"
+    "dcs_lcd_draw.c"
     "display_common.c"
     "display_driver.c"
     "display_items.c"

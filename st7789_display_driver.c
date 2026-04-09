@@ -51,6 +51,7 @@
 #include "backlight_gpio.h"
 #include "dcs_lcd_color.h"
 #include "dcs_lcd_commands.h"
+#include "dcs_lcd_draw.h"
 #include "dcs_lcd_screen.h"
 #include "display_common.h"
 #include "display_items.h"
@@ -63,8 +64,6 @@
 // if needed it can be lowered to 27000000, while maximum is 62.5 Mhz
 #define SPI_CLOCK_HZ 40000000
 #define SPI_MODE 0
-
-#define CHAR_WIDTH 8
 
 #define ST7789_RAMCTRL 0xB0
 #define ST7789_PORCTRL 0xB2
@@ -110,246 +109,6 @@ static void display_init_alt_gamma_2(struct SPI *spi);
 static void display_init_std(struct SPI *spi);
 static void display_init_using_list(struct SPI *spi, term init_list);
 
-static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
-{
-    int x = item->x;
-    int y = item->y;
-
-    uint16_t bgcolor = 0;
-    bool visible_bg;
-    if (item->brcolor != 0) {
-        bgcolor = rgba8888_color_to_rgb565(item->brcolor);
-        visible_bg = true;
-    } else {
-        visible_bg = false;
-    }
-
-    int width = item->width;
-    const char *data = item->data.image_data.pix;
-
-    int drawn_pixels = 0;
-
-    uint32_t *pixels = ((uint32_t *) data) + (ypos - y) * width + (xpos - x);
-    uint16_t *pixmem16 = (uint16_t *) (((uint8_t *) screen->pixels) + xpos * sizeof(uint16_t));
-
-    if (width > xpos - x + max_line_len) {
-        width = xpos - x + max_line_len;
-    }
-
-    for (int j = xpos - x; j < width; j++) {
-        uint32_t img_pixel = READ_32_UNALIGNED(pixels);
-        uint8_t alpha = rgba8888_get_alpha(img_pixel);
-        if (alpha == 0xFF) {
-            uint16_t color = uint32_color_to_surface(img_pixel);
-            pixmem16[drawn_pixels] = color;
-        } else if (visible_bg) {
-            uint16_t color = rgba8888_color_to_rgb565(img_pixel);
-            uint16_t blended = alpha_blend_rgb565(color, bgcolor, alpha);
-            pixmem16[drawn_pixels] = rgb565_color_to_surface(blended);
-        } else {
-            return drawn_pixels;
-        }
-        drawn_pixels++;
-        pixels++;
-    }
-
-    return drawn_pixels;
-}
-
-static int draw_scaled_cropped_img_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
-{
-    int x = item->x;
-    int y = item->y;
-
-    uint16_t bgcolor = 0;
-    bool visible_bg;
-    if (item->brcolor != 0) {
-        bgcolor = rgba8888_color_to_rgb565(item->brcolor);
-        visible_bg = true;
-    } else {
-        visible_bg = false;
-    }
-
-    int width = item->width;
-    const char *data = item->data.image_data_with_size.pix;
-
-    int drawn_pixels = 0;
-
-    int y_scale = item->y_scale;
-    int x_scale = item->x_scale;
-    int img_width = item->data.image_data_with_size.width;
-
-    int source_x = item->source_x;
-    int source_y = item->source_y;
-
-    uint32_t *pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + ((xpos - x) / x_scale);
-    uint16_t *pixmem16 = (uint16_t *) (((uint8_t *) screen->pixels) + xpos * sizeof(uint16_t));
-
-    if (source_x + (width / x_scale) > img_width) {
-        width = (img_width - source_x) * x_scale;
-    }
-
-    if (width > xpos - x + max_line_len) {
-        width = xpos - x + max_line_len;
-    }
-
-    for (int j = xpos - x; j < width; j++) {
-        uint32_t img_pixel = READ_32_UNALIGNED(pixels);
-        uint8_t alpha = rgba8888_get_alpha(img_pixel);
-        if (alpha == 0xFF) {
-            uint16_t color = uint32_color_to_surface(img_pixel);
-            pixmem16[drawn_pixels] = color;
-        } else if (visible_bg) {
-            uint16_t color = rgba8888_color_to_rgb565(img_pixel);
-            uint16_t blended = alpha_blend_rgb565(color, bgcolor, alpha);
-            pixmem16[drawn_pixels] = rgb565_color_to_surface(blended);
-        } else {
-            return drawn_pixels;
-        }
-        drawn_pixels++;
-        // TODO: optimize here
-        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + (j / x_scale);
-    }
-
-    return drawn_pixels;
-}
-
-static int draw_rect_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
-{
-    int x = item->x;
-    int width = item->width;
-    uint16_t color = uint32_color_to_surface(item->brcolor);
-
-    int drawn_pixels = 0;
-
-    uint16_t *pixmem16 = (uint16_t *) (((uint8_t *) screen->pixels) + xpos * sizeof(uint16_t));
-
-    if (width > xpos - x + max_line_len) {
-        width = xpos - x + max_line_len;
-    }
-
-    for (int j = xpos - x; j < width; j++) {
-        pixmem16[drawn_pixels] = color;
-        drawn_pixels++;
-    }
-
-    return drawn_pixels;
-}
-
-static int draw_text_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
-{
-    int x = item->x;
-    int y = item->y;
-    uint16_t fgcolor = uint32_color_to_surface(item->data.text_data.fgcolor);
-    uint16_t bgcolor;
-    bool visible_bg;
-    if (item->brcolor != 0) {
-        bgcolor = uint32_color_to_surface(item->brcolor);
-        visible_bg = true;
-    } else {
-        visible_bg = false;
-    }
-
-    char *text = (char *) item->data.text_data.text;
-
-    int width = item->width;
-
-    int drawn_pixels = 0;
-
-    uint16_t *pixmem32 = (uint16_t *) (((uint8_t *) screen->pixels) + xpos * sizeof(uint16_t));
-
-    if (width > xpos - x + max_line_len) {
-        width = xpos - x + max_line_len;
-    }
-
-    for (int j = xpos - x; j < width; j++) {
-        int char_index = j / CHAR_WIDTH;
-        char c = text[char_index];
-        unsigned const char *glyph = fontdata + ((unsigned char) c) * 16;
-
-        unsigned char row = glyph[ypos - y];
-
-        bool opaque;
-        int k = j % CHAR_WIDTH;
-        if (row & (1 << (7 - k))) {
-            opaque = true;
-        } else {
-            opaque = false;
-        }
-
-        if (opaque) {
-            pixmem32[drawn_pixels] = fgcolor;
-        } else if (visible_bg) {
-            pixmem32[drawn_pixels] = bgcolor;
-        } else {
-            return drawn_pixels;
-        }
-        drawn_pixels++;
-    }
-
-    return drawn_pixels;
-}
-
-static int find_max_line_len(BaseDisplayItem *items, int count, int xpos, int ypos)
-{
-    int line_len = screen->w - xpos;
-
-    for (int i = 0; i < count; i++) {
-        BaseDisplayItem *item = &items[i];
-
-        if ((xpos < item->x) && (ypos >= item->y) && (ypos < item->y + item->height)) {
-            int len_to_item = item->x - xpos;
-            line_len = (line_len > len_to_item) ? len_to_item : line_len;
-        }
-    }
-
-    return line_len;
-}
-
-static int draw_x(int xpos, int ypos, BaseDisplayItem *items, int items_count)
-{
-    bool below = false;
-
-    for (int i = 0; i < items_count; i++) {
-        BaseDisplayItem *item = &items[i];
-        if ((xpos < item->x) || (xpos >= item->x + item->width) || (ypos < item->y) || (ypos >= item->y + item->height)) {
-            continue;
-        }
-
-        int max_line_len = below ? 1 : find_max_line_len(items, i, xpos, ypos);
-
-        int drawn_pixels = 0;
-        switch (items[i].primitive) {
-            case Image:
-                drawn_pixels = draw_image_x(xpos, ypos, max_line_len, item);
-                break;
-
-            case Rect:
-                drawn_pixels = draw_rect_x(xpos, ypos, max_line_len, item);
-                break;
-
-            case ScaledCroppedImage:
-                drawn_pixels = draw_scaled_cropped_img_x(xpos, ypos, max_line_len, item);
-                break;
-
-            case Text:
-                drawn_pixels = draw_text_x(xpos, ypos, max_line_len, item);
-                break;
-            default: {
-                fprintf(stderr, "unexpected display list command.\n");
-            }
-        }
-
-        if (drawn_pixels != 0) {
-            return drawn_pixels;
-        }
-
-        below = true;
-    }
-
-    return 1;
-}
-
 static void do_update(Context *ctx, term display_list)
 {
     int proper;
@@ -376,7 +135,7 @@ static void do_update(Context *ctx, term display_list)
     for (int ypos = 0; ypos < screen_height; ypos++) {
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = draw_x(xpos, ypos, items, len);
+            int drawn_pixels = dcs_lcd_draw_x(screen, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
