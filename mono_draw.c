@@ -314,8 +314,7 @@ int mono_draw_scaled_cropped_img_x(const struct MonoScreen *screen,
             return drawn_pixels;
         }
         drawn_pixels++;
-        //TODO: optimize here
-        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + (j / x_scale);
+        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + ((j + 1) / x_scale);
     }
 
     return drawn_pixels;

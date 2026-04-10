@@ -344,7 +344,7 @@ static int draw_scaled_cropped_img_x(int xpos, int ypos, int max_line_len, BaseD
             return drawn_pixels;
         }
         drawn_pixels++;
-        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + (j / x_scale);
+        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + ((j + 1) / x_scale);
     }
 
     return drawn_pixels;
