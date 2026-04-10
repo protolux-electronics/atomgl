@@ -193,6 +193,8 @@ static void do_update(Context *ctx, term display_list)
 
     spi_device_release_bus(spi->bus.spi_disp.handle);
 
+    free(buf);
+
     // not sure if we should add 0x11, which is end of data command or not
 
     // power on command
@@ -288,6 +290,8 @@ static void clear_screen(Context *ctx, int color)
     }
 
     spi_device_release_bus(spi->bus.spi_disp.handle);
+
+    free(buf);
 
     spi_dc_writecommand(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
