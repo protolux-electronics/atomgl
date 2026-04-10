@@ -48,7 +48,6 @@
 #define DISPLAY_HEIGHT 64
 #define PAGE_HEIGHT 8
 #define PAGES_NUM 8
-#define CHAR_WIDTH 8
 
 #define I2C_ADDRESS 0x3C
 
@@ -82,10 +81,11 @@ struct SPI
 #define SPI_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
 
+static struct MonoScreen *mono_screen;
+
 #include "font_data.h"
 #include "display_items.h"
-#include "draw_common.h"
-#include "monochrome.h"
+#include "mono_draw.h"
 
 static void do_update(Context *ctx, term display_list)
 {
@@ -117,7 +117,7 @@ static void do_update(Context *ctx, term display_list)
     for (int ypos = 0; ypos < screen_height; ypos++) {
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = draw_x(buf, xpos, ypos, items, len);
+            int drawn_pixels = mono_draw_x(mono_screen, buf, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -226,6 +226,10 @@ static void display_init(Context *ctx, term opts)
     }
 
     bool invert = interop_kv_get_value(opts, ATOM_STR("\x6", "invert"), glb) == TRUE_ATOM;
+
+    mono_screen = calloc(1, sizeof(struct MonoScreen));
+    mono_screen->w = DISPLAY_WIDTH;
+    mono_screen->h = DISPLAY_HEIGHT;
 
     struct SPI *spi = malloc(sizeof(struct SPI));
 

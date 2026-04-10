@@ -54,11 +54,9 @@
 #include "display_task.h"
 #include "spi_display.h"
 
-#define CHAR_WIDTH 8
-
 #define DISPLAY_WIDTH 400
+#define DISPLAY_HEIGHT 240
 
-#define CHECK_OVERFLOW 1
 #define REPORT_UNEXPECTED_MSGS 0
 
 #include "font_data.h"
@@ -76,9 +74,8 @@ struct SPI
 
 #include "display_items.h"
 #include "display_message.h"
-#include "draw_common.h"
 #include "image_helpers.h"
-#include "monochrome.h"
+#include "mono_draw.h"
 
 // This struct is just for compatibility reasons with the SDL display driver
 // so it is possible to easily copy & paste code from there.
@@ -92,6 +89,7 @@ struct Screen
 };
 
 static struct Screen *screen;
+static struct MonoScreen *mono_screen;
 
 static void display_init(Context *ctx, term opts);
 
@@ -141,7 +139,7 @@ static void do_update(Context *ctx, term display_list)
 
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = draw_x(buf + 2, xpos, ypos, items, len);
+            int drawn_pixels = mono_draw_x(mono_screen, buf + 2, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -231,6 +229,11 @@ static void display_init(Context *ctx, term opts)
     // FIXME: hardcoded width and height
     screen->w = 400;
     screen->h = 240;
+
+    mono_screen = calloc(1, sizeof(struct MonoScreen));
+    mono_screen->w = DISPLAY_WIDTH;
+    mono_screen->h = DISPLAY_HEIGHT;
+
     int memsize = 2 + 400 / 8 + 2;
 
     screen->pixels = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
