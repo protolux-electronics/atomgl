@@ -25,7 +25,9 @@
 #ifdef WITH_ZLIB
 #include <zlib.h>
 #else
+#ifndef ESP_PLATFORM
 #include "miniz.c"
+#endif
 #include "miniz.h"
 #endif
 #include <assert.h>
@@ -587,12 +589,19 @@ static uint32_t ufont_iff_align(uint32_t size)
 
 static int ufont_iff_is_valid_ufl(const void *iff)
 {
-    return memcmp(iff, "UFL0", 4) == 0;
+    // Standard IFF layout produced by fontconvert.py:
+    //   offset 0: "FORM" (IFF group magic)
+    //   offset 4: file size (big-endian)
+    //   offset 8: "uFL0" (form type, lowercase u)
+    //   offset 12+: IFF records (uFH0, uFP0, uFI0, uFB0)
+    const uint8_t *data = iff;
+    return memcmp(data, "FORM", 4) == 0
+            && memcmp(data + 8, "uFL0", 4) == 0;
 }
 
 EpdFont *ufont_parse(const void *iff_binary, int buf_size)
 {
-    if (ufont_iff_is_valid_ufl(iff_binary)) {
+    if (!ufont_iff_is_valid_ufl(iff_binary)) {
         return NULL;
     }
 

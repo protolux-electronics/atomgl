@@ -31,7 +31,7 @@
 #include <term.h>
 #include <utils.h>
 
-#include "ufontlib.h"
+#include "../ufontlib.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240

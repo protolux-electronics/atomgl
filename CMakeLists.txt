@@ -47,6 +47,7 @@ idf_component_register(SRCS
     "st7789_display_driver.c"
     "spi_dc_driver.c"
     "spi_display.c"
+    "ufontlib.c"
     "backlight_gpio.c"
     "image_helpers.c"
     "spng.c"
@@ -55,7 +56,7 @@ idf_component_register(SRCS
     ${OPTIONAL_WHOLE_ARCHIVE}
 )
 
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DSPNG_USE_MINIZ=1")
+target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DSPNG_USE_MINIZ=1" "-DENABLE_UFONT")
 
 if (IDF_VERSION_MAJOR EQUAL 4)
     idf_build_set_property(

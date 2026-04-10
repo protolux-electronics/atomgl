@@ -21,8 +21,10 @@
 #ifndef _DISPLAY_ITEMS_H_
 #define _DISPLAY_ITEMS_H_
 
-#include <context.h>
+#include <stdbool.h>
 #include <stdint.h>
+
+#include <context.h>
 
 // TODO: deprecated helper, remove this
 static inline term context_make_atom(Context *ctx, AtomString string)
@@ -77,6 +79,8 @@ struct BaseDisplayItem
     int source_y;
     int x_scale;
     int y_scale;
+
+    bool owns_data;
 };
 
 typedef struct BaseDisplayItem BaseDisplayItem;

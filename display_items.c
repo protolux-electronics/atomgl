@@ -26,8 +26,50 @@
 
 #include <interop.h>
 
+#ifdef ENABLE_UFONT
+#include "ufontlib.h"
+extern UFontManager *ufont_manager;
+
+#ifdef ESP_PLATFORM
+struct Surface
+{
+    int width;
+    int height;
+    void *buffer;
+    uint32_t fg_color; // RGBA8888 little-endian byte order with the
+                       // alpha byte cleared; ORed with the per-pixel
+                       // alpha in epd_draw_pixel.
+};
+
+#define BPP 4
+
+void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
+{
+    struct Surface *surface = buffer;
+
+    if (xpos < 0 || ypos < 0 || xpos >= surface->width
+            || ypos >= surface->height) {
+        return;
+    }
+
+    uint32_t *pixel = (uint32_t *) (((uint8_t *) surface->buffer)
+            + (surface->width * ypos + xpos) * sizeof(uint32_t));
+
+    // The `color` parameter is the LUT-mapped glyph value from
+    // draw_char: 0 = full foreground (fg_color=0 in default props),
+    // 240 = full background (bg_color=15), in steps of 16. Render
+    // the foreground RGB on transparent with anti-aliased alpha
+    // derived from the inverted grayscale.
+    uint8_t alpha = (15 - (color >> 4)) * 17;
+    *pixel = ((uint32_t) alpha << 24) | (surface->fg_color & 0x00FFFFFFu);
+}
+#endif /* ESP_PLATFORM */
+#endif /* ENABLE_UFONT */
+
 void init_item(BaseDisplayItem *item, term req, Context *ctx)
 {
+    item->owns_data = false;
+
     term cmd = term_get_tuple_element(req, 0);
 
     if (cmd == context_make_atom(ctx, "\x5"
@@ -136,10 +178,12 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
 
         } else {
 #ifdef ENABLE_UFONT
-            AtomString handle_atom = globalcontext_atomstring_from_term(ctx->global, font);
-            char handle[255];
-            atom_string_to_c(handle_atom, handle, sizeof(handle));
-            EpdFont *loaded_font = ufont_manager_find_by_handle(ufont_manager, handle);
+            char *handle = interop_atom_to_string(ctx, font);
+            EpdFont *loaded_font = NULL;
+            if (handle != NULL) {
+                loaded_font = ufont_manager_find_by_handle(ufont_manager, handle);
+                free(handle);
+            }
 
             if (!loaded_font) {
                 fprintf(stderr, "unsupported font: ");
@@ -156,6 +200,12 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
             surface.height = rect.height;
             surface.buffer = malloc(rect.width * rect.height * BPP);
             memset(surface.buffer, 0, rect.width * rect.height * BPP);
+            // Convert Erlang fgcolor (0xRRGGBBAA) to RGBA8888 little-
+            // endian byte order (R in low byte, alpha byte cleared) so
+            // epd_draw_pixel can OR it with the per-pixel alpha.
+            surface.fg_color = ((fgcolor >> 24) & 0xFFu)
+                    | (((fgcolor >> 16) & 0xFFu) << 8)
+                    | (((fgcolor >> 8) & 0xFFu) << 16);
             int text_x = 0;
             int text_y = loaded_font->ascender;
             enum EpdDrawError res = epd_write_default(loaded_font, text, &text_x, &text_y, &surface);
@@ -169,8 +219,8 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
             item->width = surface.width;
             item->height = surface.height;
             item->brcolor = 0;
-            //FIXME: surface buffer leak
             item->data.image_data.pix = surface.buffer;
+            item->owns_data = true;
 #else
             fprintf(stderr, "unsupported font: ");
             term_display(stderr, font, ctx);
@@ -205,6 +255,9 @@ void destroy_items(BaseDisplayItem *items, int items_count)
 
         switch (item->primitive) {
             case Image:
+                if (item->owns_data) {
+                    free((void *) item->data.image_data.pix);
+                }
                 break;
 
             case Rect:

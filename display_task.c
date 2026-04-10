@@ -20,8 +20,17 @@
 
 #include "display_task.h"
 
+#include <defaultatoms.h>
+#include <interop.h>
 #include <memory.h>
+#include <port.h>
+#include <term.h>
 #include <utils.h>
+
+#include "display_message.h"
+#include "ufontlib.h"
+
+UFontManager *ufont_manager;
 
 NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
 {
@@ -50,14 +59,59 @@ NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
     return NativeContinue;
 }
 
+static bool try_handle_register_font(Message *message, Context *ctx)
+{
+    GenMessage gen_message;
+    if (UNLIKELY(port_parse_gen_message(message->message,
+                &gen_message) != GenCallMessage)) {
+        return false;
+    }
+
+    term req = gen_message.req;
+    if (UNLIKELY(!term_is_tuple(req) || term_get_tuple_arity(req) < 1)) {
+        return false;
+    }
+    term cmd = term_get_tuple_element(req, 0);
+
+    if (cmd != globalcontext_make_atom(ctx->global,
+                "\xD" "register_font")) {
+        return false;
+    }
+
+    term font_bin = term_get_tuple_element(req, 2);
+    EpdFont *loaded_font = ufont_parse(
+            term_binary_data(font_bin), term_binary_size(font_bin));
+
+    char *handle = interop_atom_to_string(ctx,
+            term_get_tuple_element(req, 1));
+    if (loaded_font != NULL && handle != NULL) {
+        ufont_manager_register(ufont_manager, handle, loaded_font);
+    }
+    free(handle);
+
+    BEGIN_WITH_STACK_HEAP(TUPLE_SIZE(2) + REF_SIZE, heap);
+    term return_tuple = term_alloc_tuple(2, &heap);
+    term_put_tuple_element(return_tuple, 0, gen_message.ref);
+    term_put_tuple_element(return_tuple, 1, OK_ATOM);
+    send_message(gen_message.pid, return_tuple, ctx->global);
+    END_WITH_STACK_HEAP(heap, ctx->global);
+
+    return true;
+}
+
 void display_process_messages(void *arg)
 {
     struct DisplayTaskArgs *args = arg;
 
+    ufont_manager = ufont_manager_new();
+
     while (true) {
         Message *message;
         xQueueReceive(args->messages_queue, &message, portMAX_DELAY);
-        args->process_message_fn(message, args->ctx);
+
+        if (!try_handle_register_font(message, args->ctx)) {
+            args->process_message_fn(message, args->ctx);
+        }
 
         BEGIN_WITH_STACK_HEAP(1, temp_heap);
         mailbox_message_dispose(&message->base, &temp_heap);
