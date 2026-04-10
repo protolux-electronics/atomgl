@@ -18,23 +18,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _SPI_DC_DRIVER_H_
-#define _SPI_DC_DRIVER_H_
+#ifndef _EPAPER_SCREEN_H_
+#define _EPAPER_SCREEN_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
-#include "spi_display.h"
-
-struct SPIDCBus
+struct EpaperScreen
 {
-    struct SPIDisplay spi_disp;
-    int dc_gpio;
+    int w;
+    int h;
+    const uint8_t (*palette)[3];
+    int palette_size;
 };
-
-void spi_dc_writedata(struct SPIDCBus *bus, uint32_t data);
-void spi_dc_writecommand(struct SPIDCBus *bus, uint8_t cmd);
-void spi_dc_writecmddata(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t length);
-void spi_dc_writedatan(struct SPIDCBus *bus, const uint8_t *data, size_t length);
 
 #endif

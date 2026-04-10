@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2026 Davide Bettio <davide@uninstall.it>
+ * Copyright 2022-2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,23 +18,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _SPI_DC_DRIVER_H_
-#define _SPI_DC_DRIVER_H_
+#ifndef _EPAPER_COLOR_H_
+#define _EPAPER_COLOR_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
-#include "spi_display.h"
+extern const uint8_t epaper_acep_palette[7][3];
+extern const uint8_t epaper_gdep073e01_palette[7][3];
 
-struct SPIDCBus
-{
-    struct SPIDisplay spi_disp;
-    int dc_gpio;
-};
-
-void spi_dc_writedata(struct SPIDCBus *bus, uint32_t data);
-void spi_dc_writecommand(struct SPIDCBus *bus, uint8_t cmd);
-void spi_dc_writecmddata(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t length);
-void spi_dc_writedatan(struct SPIDCBus *bus, const uint8_t *data, size_t length);
+uint8_t epaper_dither_acep7(int x, int y, uint8_t r, uint8_t g, uint8_t b,
+    const uint8_t palette[][3], int palette_size);
 
 #endif

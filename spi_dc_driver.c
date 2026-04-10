@@ -46,3 +46,10 @@ void spi_dc_writecmddata(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data,
         spi_dc_writedata(bus, data[i]);
     }
 }
+
+void spi_dc_writedatan(struct SPIDCBus *bus, const uint8_t *data, size_t length)
+{
+    for (size_t i = 0; i < length; i++) {
+        spi_dc_writedata(bus, data[i]);
+    }
+}
