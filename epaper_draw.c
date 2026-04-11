@@ -311,19 +311,19 @@ int epaper_draw_x(const struct EpaperScreen *screen,
 
         int drawn_pixels = 0;
         switch (items[i].primitive) {
-            case Image:
+            case PrimitiveImage:
                 drawn_pixels = epaper_draw_image_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case ScaledCroppedImage:
+            case PrimitiveScaledCroppedImage:
                 drawn_pixels = epaper_draw_scaled_cropped_img_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 drawn_pixels = epaper_draw_rect_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case Text:
+            case PrimitiveText:
                 drawn_pixels = epaper_draw_text_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 

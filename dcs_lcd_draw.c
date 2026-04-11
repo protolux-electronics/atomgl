@@ -246,19 +246,19 @@ int dcs_lcd_draw_x(const struct DCSLCDScreen *screen,
 
         int drawn_pixels = 0;
         switch (items[i].primitive) {
-            case Image:
+            case PrimitiveImage:
                 drawn_pixels = dcs_lcd_draw_image_x(screen, xpos, ypos, max_line_len, item);
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 drawn_pixels = dcs_lcd_draw_rect_x(screen, xpos, ypos, max_line_len, item);
                 break;
 
-            case ScaledCroppedImage:
+            case PrimitiveScaledCroppedImage:
                 drawn_pixels = dcs_lcd_draw_scaled_cropped_img_x(screen, xpos, ypos, max_line_len, item);
                 break;
 
-            case Text:
+            case PrimitiveText:
                 drawn_pixels = dcs_lcd_draw_text_x(screen, xpos, ypos, max_line_len, item);
                 break;
             default: {

@@ -63,9 +63,9 @@
 
 typedef enum
 {
-    DISPLAY_SSD1306,
-    DISPLAY_SSD1315,
-    DISPLAY_SH1106,
+    DisplayTypeSsd1306,
+    DisplayTypeSsd1315,
+    DisplayTypeSh1106,
 } display_type_t;
 
 // TODO: let's change name, since also non SPI display are supported now
@@ -96,7 +96,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -135,7 +135,7 @@ static void do_update(Context *ctx, term display_list)
             i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
             i2c_master_write_byte(cmd, 0xB0 | ypos / 8, true);
 
-            if (spi->type == DISPLAY_SH1106 || spi->type == DISPLAY_SSD1315) {
+            if (spi->type == DisplayTypeSh1106 || spi->type == DisplayTypeSsd1315) {
                 // SSD1315 and SH1106 require explicit column address reset
                 i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
                 i2c_master_write_byte(cmd, 0x00, true);
@@ -145,7 +145,7 @@ static void do_update(Context *ctx, term display_list)
             i2c_master_write_byte(cmd, CTRL_BYTE_DATA_STREAM, true);
 
 
-            if (spi->type == DISPLAY_SH1106) {
+            if (spi->type == DisplayTypeSh1106) {
                 // add 2 empty pages on sh1106 since it can have up to 132 pixels
                 // and 128 pixel screen starts at (2, 0)
                 i2c_master_write_byte(cmd, 0, true);
@@ -157,7 +157,7 @@ static void do_update(Context *ctx, term display_list)
             }
 
             // no need to send the last 2 page, the position will be set on next line again
-            // if (spi->type == DISPLAY_SH1106) {
+            // if (spi->type == DisplayTypeSh1106) {
             //    i2c_master_write_byte(cmd, 0, true);
             //    i2c_master_write_byte(cmd, 0, true);
             // }
@@ -173,7 +173,7 @@ static void do_update(Context *ctx, term display_list)
     i2c_driver_release(spi->i2c_host, ctx->global);
 
     free(buf);
-    destroy_items(items, len);
+    display_items_delete(items, len);
 }
 
 static void process_message(Message *message, Context *ctx)
@@ -210,7 +210,7 @@ static void process_message(Message *message, Context *ctx)
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
 
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
@@ -239,7 +239,7 @@ static void display_init(Context *ctx, term opts)
     ctx->platform_data = &spi->display_args;
 
     spi->ctx = ctx;
-    spi->type = DISPLAY_SSD1306; // Default to SSD1306
+    spi->type = DisplayTypeSsd1306; // Default to SSD1306
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
     int str_ok;
@@ -251,9 +251,9 @@ static void display_init(Context *ctx, term opts)
     }
 
     if (!strcmp(compat_string, "sino-wealth,sh1106")) {
-        spi->type = DISPLAY_SH1106;
+        spi->type = DisplayTypeSh1106;
     } else if (!strcmp(compat_string, "solomon-systech,ssd1315")) {
-        spi->type = DISPLAY_SSD1315;
+        spi->type = DisplayTypeSsd1315;
     }
 
     free(compat_string);
@@ -280,7 +280,7 @@ static void display_init(Context *ctx, term opts)
     i2c_master_write_byte(cmd, (I2C_ADDRESS << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, CTRL_BYTE_CMD_STREAM, true);
 
-    if (spi->type == DISPLAY_SSD1315) {
+    if (spi->type == DisplayTypeSsd1315) {
         /*
          * Init sequence derived from u8g2 project (BSD-2-Clause).
          * Source: https://github.com/olikraus/u8g2
@@ -344,7 +344,7 @@ static void display_init(Context *ctx, term opts)
     if (res != ESP_OK) {
         ESP_LOGE(TAG, "ssd1306/ssd1315 OLED configuration failed. error: 0x%.2X", res);
     } else {
-        xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+        xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
     }
 
     i2c_cmd_link_delete(cmd);
@@ -354,7 +354,7 @@ static void display_init(Context *ctx, term opts)
 Context *ssd1306_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
-    ctx->native_handler = display_driver_consume_mailbox;
+    ctx->native_handler = display_task_consume_mailbox;
     display_init(ctx, opts);
 
     return ctx;

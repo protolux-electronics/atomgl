@@ -164,7 +164,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -174,15 +174,15 @@ static void do_update(Context *ctx, term display_list)
 
 #if 0
     // resolution command
-    spi_dc_writecommand(&spi->bus, 0x61);
-    spi_dc_writedata(&spi->bus, 0x02);
-    spi_dc_writedata(&spi->bus, 0x58);
-    spi_dc_writedata(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0xC0);
+    spi_dc_write_command(&spi->bus, 0x61);
+    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_data(&spi->bus, 0x58);
+    spi_dc_write_data(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0xC0);
 #endif
 
     // update command
-    spi_dc_writecommand(&spi->bus, 0x10);
+    spi_dc_write_command(&spi->bus, 0x10);
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
     memset(buf, 0x11, DISPLAY_WIDTH / 2);
@@ -203,7 +203,7 @@ static void do_update(Context *ctx, term display_list)
             xpos += drawn_pixels;
         }
 
-        spi_display_dmawrite(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -219,20 +219,20 @@ static void do_update(Context *ctx, term display_list)
     // not sure if we should add 0x11, which is end of data command or not
 
     // power on command
-    spi_dc_writecommand(&spi->bus, 0x04);
+    spi_dc_write_command(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
 
     // refresh command
-    spi_dc_writecommand(&spi->bus, 0x12);
+    spi_dc_write_command(&spi->bus, 0x12);
     uint8_t refresh_data[] = {0x00};
-    spi_dc_writedatan(&spi->bus, refresh_data, sizeof(refresh_data));
+    spi_dc_write_data_n(&spi->bus, refresh_data, sizeof(refresh_data));
     wait_busy_level(spi, 1);
 
     // power off command
-    spi_dc_writecommand(&spi->bus, 0x02);
+    spi_dc_write_command(&spi->bus, 0x02);
     wait_busy_level(spi, 1);
 
-    destroy_items(items, len);
+    display_items_delete(items, len);
 
     update_last_refresh_ts(ctx);
 }
@@ -274,7 +274,7 @@ static void process_message(Message *message, Context *ctx)
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
 
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
@@ -285,13 +285,13 @@ static void clear_screen(Context *ctx, int color)
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
 
 #if 0
-    spi_dc_writecommand(&spi->bus, 0x61);
-    spi_dc_writedata(&spi->bus, 0x02);
-    spi_dc_writedata(&spi->bus, 0x58);
-    spi_dc_writedata(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0xC0);
+    spi_dc_write_command(&spi->bus, 0x61);
+    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_data(&spi->bus, 0x58);
+    spi_dc_write_data(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0xC0);
 #endif
-    spi_dc_writecommand(&spi->bus, 0x10);
+    spi_dc_write_command(&spi->bus, 0x10);
 
     bool transaction_in_progress = false;
 
@@ -305,7 +305,7 @@ static void clear_screen(Context *ctx, int color)
 
         // let's ensure a memset otherwise we might generate odd artifacts
         memset(buf, color | (color << 4), DISPLAY_WIDTH / 2);
-        spi_display_dmawrite(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -318,13 +318,13 @@ static void clear_screen(Context *ctx, int color)
 
     free(buf);
 
-    spi_dc_writecommand(&spi->bus, 0x04);
+    spi_dc_write_command(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
-    spi_dc_writecommand(&spi->bus, 0x12);
+    spi_dc_write_command(&spi->bus, 0x12);
     uint8_t refresh_data[] = {0x00};
-    spi_dc_writedatan(&spi->bus, refresh_data, sizeof(refresh_data));
+    spi_dc_write_data_n(&spi->bus, refresh_data, sizeof(refresh_data));
     wait_busy_level(spi, 1);
-    spi_dc_writecommand(&spi->bus, 0x02);
+    spi_dc_write_command(&spi->bus, 0x02);
     wait_busy_level(spi, 1);
 }
 
@@ -359,73 +359,73 @@ static void display_spi_init(Context *ctx, term opts)
 
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, 0xAA);
+    spi_dc_write_command(&spi->bus, 0xAA);
     uint8_t psr1_data[] = {0x49, 0x55, 0x20, 0x08, 0x09, 0x18};
-    spi_dc_writedatan(&spi->bus, psr1_data, sizeof(psr1_data));
+    spi_dc_write_data_n(&spi->bus, psr1_data, sizeof(psr1_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, PWRR);
+    spi_dc_write_command(&spi->bus, PWRR);
     uint8_t pwrr_data[] = {0x3F};
-    spi_dc_writedatan(&spi->bus, pwrr_data, sizeof(pwrr_data));
+    spi_dc_write_data_n(&spi->bus, pwrr_data, sizeof(pwrr_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, PSR);
+    spi_dc_write_command(&spi->bus, PSR);
     uint8_t psr_data[] = {0x5F, 0x69};
-    spi_dc_writedatan(&spi->bus, psr_data, sizeof(psr_data));
+    spi_dc_write_data_n(&spi->bus, psr_data, sizeof(psr_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, POFS);
+    spi_dc_write_command(&spi->bus, POFS);
     uint8_t pofs_data[] = {0x00, 0x54, 0x00, 0x44};
-    spi_dc_writedatan(&spi->bus, pofs_data, sizeof(pofs_data));
+    spi_dc_write_data_n(&spi->bus, pofs_data, sizeof(pofs_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, BTST1);
+    spi_dc_write_command(&spi->bus, BTST1);
     uint8_t btst1_data[] = {0x40, 0x1F, 0x1F, 0x2C};
-    spi_dc_writedatan(&spi->bus, btst1_data, sizeof(btst1_data));
+    spi_dc_write_data_n(&spi->bus, btst1_data, sizeof(btst1_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, BTST2);
+    spi_dc_write_command(&spi->bus, BTST2);
     uint8_t btst2_data[] = {0x6F, 0x1F, 0x17, 0x49};
-    spi_dc_writedatan(&spi->bus, btst2_data, sizeof(btst2_data));
+    spi_dc_write_data_n(&spi->bus, btst2_data, sizeof(btst2_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, BTST3);
+    spi_dc_write_command(&spi->bus, BTST3);
     uint8_t btst3_data[] = {0x6F, 0x1F, 0x1F, 0x22};
-    spi_dc_writedatan(&spi->bus, btst3_data, sizeof(btst3_data));
+    spi_dc_write_data_n(&spi->bus, btst3_data, sizeof(btst3_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, PLL);
+    spi_dc_write_command(&spi->bus, PLL);
     uint8_t pll_data[] = {0x00};
-    spi_dc_writedatan(&spi->bus, pll_data, sizeof(pll_data));
+    spi_dc_write_data_n(&spi->bus, pll_data, sizeof(pll_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, CDI);
+    spi_dc_write_command(&spi->bus, CDI);
     uint8_t cdi_data[] = {0x3F};
-    spi_dc_writedatan(&spi->bus, cdi_data, sizeof(cdi_data));
+    spi_dc_write_data_n(&spi->bus, cdi_data, sizeof(cdi_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, TCON);
+    spi_dc_write_command(&spi->bus, TCON);
     uint8_t tcon_data[] = {0x02, 0x00};
-    spi_dc_writedatan(&spi->bus, tcon_data, sizeof(tcon_data));
+    spi_dc_write_data_n(&spi->bus, tcon_data, sizeof(tcon_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, TRES);
+    spi_dc_write_command(&spi->bus, TRES);
     uint8_t tres_data[] = {0x03, 0x20, 0x01, 0xe0};
-    spi_dc_writedatan(&spi->bus, tres_data, sizeof(tres_data));
+    spi_dc_write_data_n(&spi->bus, tres_data, sizeof(tres_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, T_VDCS);
+    spi_dc_write_command(&spi->bus, T_VDCS);
     uint8_t vdcs_data[] = {0x01};
-    spi_dc_writedatan(&spi->bus, vdcs_data, sizeof(vdcs_data));
+    spi_dc_write_data_n(&spi->bus, vdcs_data, sizeof(vdcs_data));
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, PWS);
+    spi_dc_write_command(&spi->bus, PWS);
     uint8_t pws_data[] = {0x2F};
-    spi_dc_writedatan(&spi->bus, pws_data, sizeof(pws_data));
+    spi_dc_write_data_n(&spi->bus, pws_data, sizeof(pws_data));
     wait_busy_level(spi, 1);
 
     // PON
-    spi_dc_writecommand(&spi->bus, 0x04);
+    spi_dc_write_command(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
 
     ctx->platform_data = &spi->display_args;
@@ -455,14 +455,14 @@ static void display_spi_init(Context *ctx, term opts)
     spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
     spi->display_args.process_message_fn = process_message;
     spi->display_args.ctx = ctx;
-    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 #endif
 }
 
 Context *gdep073e01_display_driver_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
-    ctx->native_handler = display_driver_consume_mailbox;
+    ctx->native_handler = display_task_consume_mailbox;
     display_spi_init(ctx, opts);
     return ctx;
 }

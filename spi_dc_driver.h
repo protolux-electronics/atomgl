@@ -32,9 +32,9 @@ struct SPIDCBus
     int dc_gpio;
 };
 
-void spi_dc_writedata(struct SPIDCBus *bus, uint32_t data);
-void spi_dc_writecommand(struct SPIDCBus *bus, uint8_t cmd);
-void spi_dc_writecmddata(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t length);
-void spi_dc_writedatan(struct SPIDCBus *bus, const uint8_t *data, size_t length);
+void spi_dc_write_data(struct SPIDCBus *bus, uint32_t data);
+void spi_dc_write_command(struct SPIDCBus *bus, uint8_t cmd);
+void spi_dc_write_cmd_data(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t data_len);
+void spi_dc_write_data_n(struct SPIDCBus *bus, const uint8_t *data, size_t data_len);
 
 #endif

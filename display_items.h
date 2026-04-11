@@ -32,14 +32,14 @@ static inline term context_make_atom(Context *ctx, AtomString string)
     return globalcontext_make_atom(ctx->global, string);
 }
 
-enum primitive
+typedef enum
 {
-    Invalid = 0,
-    Image,
-    ScaledCroppedImage,
-    Rect,
-    Text
-};
+    PrimitiveInvalid = 0,
+    PrimitiveImage,
+    PrimitiveScaledCroppedImage,
+    PrimitiveRect,
+    PrimitiveText
+} primitive_t;
 
 struct TextData
 {
@@ -61,7 +61,7 @@ struct ImageDataWithSize
 
 struct BaseDisplayItem
 {
-    enum primitive primitive;
+    primitive_t primitive;
     int x;
     int y;
     int width;
@@ -85,8 +85,8 @@ struct BaseDisplayItem
 
 typedef struct BaseDisplayItem BaseDisplayItem;
 
-void init_item(BaseDisplayItem *item, term req, Context *ctx);
-void destroy_items(BaseDisplayItem *items, int items_count);
+void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx);
+void display_items_delete(BaseDisplayItem *items, int items_count);
 
 #endif
 

@@ -32,7 +32,7 @@
 
 UFontManager *ufont_manager;
 
-NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
+NativeHandlerResult display_task_consume_mailbox(Context *ctx)
 {
     struct DisplayTaskArgs *args = ctx->platform_data;
 
@@ -93,13 +93,13 @@ static bool try_handle_register_font(Message *message, Context *ctx)
     term return_tuple = term_alloc_tuple(2, &heap);
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
 
     return true;
 }
 
-void display_process_messages(void *arg)
+void display_task_process_messages(void *arg)
 {
     struct DisplayTaskArgs *args = arg;
 

@@ -94,7 +94,7 @@ static void wait_busy_level(struct SPI *spi, int level)
 }
 
 
-void wait_some_time(Context *ctx)
+static void wait_some_time(Context *ctx)
 {
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
@@ -109,7 +109,7 @@ void wait_some_time(Context *ctx)
     }
 }
 
-void update_last_refresh_ts(Context *ctx)
+static void update_last_refresh_ts(Context *ctx)
 {
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
@@ -118,7 +118,7 @@ void update_last_refresh_ts(Context *ctx)
     spi->last_refresh = tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL);
 }
 
-void maybe_refresh(Context *ctx)
+static void maybe_refresh(Context *ctx)
 {
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
@@ -145,7 +145,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -154,14 +154,14 @@ static void do_update(Context *ctx, term display_list)
     struct SPI *spi = SPI_FROM_CTX(ctx);
 
     // resolution command
-    spi_dc_writecommand(&spi->bus, 0x61);
-    spi_dc_writedata(&spi->bus, 0x02);
-    spi_dc_writedata(&spi->bus, 0x58);
-    spi_dc_writedata(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0xC0);
+    spi_dc_write_command(&spi->bus, 0x61);
+    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_data(&spi->bus, 0x58);
+    spi_dc_write_data(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0xC0);
 
     // update command
-    spi_dc_writecommand(&spi->bus, 0x10);
+    spi_dc_write_command(&spi->bus, 0x10);
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
     memset(buf, 0x11, DISPLAY_WIDTH / 2);
@@ -182,7 +182,7 @@ static void do_update(Context *ctx, term display_list)
             xpos += drawn_pixels;
         }
 
-        spi_display_dmawrite(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -198,18 +198,18 @@ static void do_update(Context *ctx, term display_list)
     // not sure if we should add 0x11, which is end of data command or not
 
     // power on command
-    spi_dc_writecommand(&spi->bus, 0x04);
+    spi_dc_write_command(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
 
     // refresh command
-    spi_dc_writecommand(&spi->bus, 0x12);
+    spi_dc_write_command(&spi->bus, 0x12);
     wait_busy_level(spi, 1);
 
     // power off command
-    spi_dc_writecommand(&spi->bus, 0x02);
+    spi_dc_write_command(&spi->bus, 0x02);
     wait_busy_level(spi, 0);
 
-    destroy_items(items, len);
+    display_items_delete(items, len);
 
     update_last_refresh_ts(ctx);
 }
@@ -251,7 +251,7 @@ static void process_message(Message *message, Context *ctx)
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
 
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
@@ -261,12 +261,12 @@ static void clear_screen(Context *ctx, int color)
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
 
-    spi_dc_writecommand(&spi->bus, 0x61);
-    spi_dc_writedata(&spi->bus, 0x02);
-    spi_dc_writedata(&spi->bus, 0x58);
-    spi_dc_writedata(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0xC0);
-    spi_dc_writecommand(&spi->bus, 0x10);
+    spi_dc_write_command(&spi->bus, 0x61);
+    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_data(&spi->bus, 0x58);
+    spi_dc_write_data(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0xC0);
+    spi_dc_write_command(&spi->bus, 0x10);
 
     bool transaction_in_progress = false;
 
@@ -280,7 +280,7 @@ static void clear_screen(Context *ctx, int color)
 
         // let's ensure a memset otherwise we might generate odd artifacts
         memset(buf, color | (color << 4), DISPLAY_WIDTH / 2);
-        spi_display_dmawrite(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -293,11 +293,11 @@ static void clear_screen(Context *ctx, int color)
 
     free(buf);
 
-    spi_dc_writecommand(&spi->bus, 0x04);
+    spi_dc_write_command(&spi->bus, 0x04);
     wait_busy_level(spi, 1);
-    spi_dc_writecommand(&spi->bus, 0x12);
+    spi_dc_write_command(&spi->bus, 0x12);
     wait_busy_level(spi, 1);
-    spi_dc_writecommand(&spi->bus, 0x02);
+    spi_dc_write_command(&spi->bus, 0x02);
     wait_busy_level(spi, 0);
 }
 
@@ -332,42 +332,42 @@ static void display_spi_init(Context *ctx, term opts)
 
     wait_busy_level(spi, 1);
 
-    spi_dc_writecommand(&spi->bus, 0x00);
-    spi_dc_writedata(&spi->bus, 0xEF);
-    spi_dc_writedata(&spi->bus, 0x08);
-    spi_dc_writecommand(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0x37);
-    spi_dc_writedata(&spi->bus, 0x00);
-    spi_dc_writedata(&spi->bus, 0x23); //datasheet says: 0x05
-    spi_dc_writedata(&spi->bus, 0x23); //datasheet says: 0x05
-    spi_dc_writecommand(&spi->bus, 0x03);
-    spi_dc_writedata(&spi->bus, 0x00);
-    spi_dc_writecommand(&spi->bus, 0x06);
-    spi_dc_writedata(&spi->bus, 0xC7);
-    spi_dc_writedata(&spi->bus, 0xC7);
-    spi_dc_writedata(&spi->bus, 0x1D);
-    spi_dc_writecommand(&spi->bus, 0x30);
-    spi_dc_writedata(&spi->bus, 0x3C);
-    spi_dc_writecommand(&spi->bus, 0x40); //datasheet says: 0x41
-    spi_dc_writedata(&spi->bus, 0x00);
-    spi_dc_writecommand(&spi->bus, 0x50);
-    spi_dc_writedata(&spi->bus, 0x3F); //datasheet says: 0x37
-    spi_dc_writecommand(&spi->bus, 0x60);
-    spi_dc_writedata(&spi->bus, 0x22);
-    spi_dc_writecommand(&spi->bus, 0x61);
-    spi_dc_writedata(&spi->bus, 0x02);
-    spi_dc_writedata(&spi->bus, 0x58);
-    spi_dc_writedata(&spi->bus, 0x01);
-    spi_dc_writedata(&spi->bus, 0xC0);
-    spi_dc_writecommand(&spi->bus, 0xE3);
-    spi_dc_writedata(&spi->bus, 0xAA);
-    spi_dc_writecommand(&spi->bus, 0x82);
-    spi_dc_writedata(&spi->bus, 0x80);
+    spi_dc_write_command(&spi->bus, 0x00);
+    spi_dc_write_data(&spi->bus, 0xEF);
+    spi_dc_write_data(&spi->bus, 0x08);
+    spi_dc_write_command(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0x37);
+    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_data(&spi->bus, 0x23); //datasheet says: 0x05
+    spi_dc_write_data(&spi->bus, 0x23); //datasheet says: 0x05
+    spi_dc_write_command(&spi->bus, 0x03);
+    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&spi->bus, 0x06);
+    spi_dc_write_data(&spi->bus, 0xC7);
+    spi_dc_write_data(&spi->bus, 0xC7);
+    spi_dc_write_data(&spi->bus, 0x1D);
+    spi_dc_write_command(&spi->bus, 0x30);
+    spi_dc_write_data(&spi->bus, 0x3C);
+    spi_dc_write_command(&spi->bus, 0x40); //datasheet says: 0x41
+    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&spi->bus, 0x50);
+    spi_dc_write_data(&spi->bus, 0x3F); //datasheet says: 0x37
+    spi_dc_write_command(&spi->bus, 0x60);
+    spi_dc_write_data(&spi->bus, 0x22);
+    spi_dc_write_command(&spi->bus, 0x61);
+    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_data(&spi->bus, 0x58);
+    spi_dc_write_data(&spi->bus, 0x01);
+    spi_dc_write_data(&spi->bus, 0xC0);
+    spi_dc_write_command(&spi->bus, 0xE3);
+    spi_dc_write_data(&spi->bus, 0xAA);
+    spi_dc_write_command(&spi->bus, 0x82);
+    spi_dc_write_data(&spi->bus, 0x80);
 
     vTaskDelay(10);
 
-    spi_dc_writecommand(&spi->bus, 0x50);
-    spi_dc_writedata(&spi->bus, 0x37);
+    spi_dc_write_command(&spi->bus, 0x50);
+    spi_dc_write_data(&spi->bus, 0x37);
 
     ctx->platform_data = &spi->display_args;
 
@@ -396,14 +396,14 @@ static void display_spi_init(Context *ctx, term opts)
     spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
     spi->display_args.process_message_fn = process_message;
     spi->display_args.ctx = ctx;
-    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 #endif
 }
 
 Context *acep_5in65_7c_display_driver_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
-    ctx->native_handler = display_driver_consume_mailbox;
+    ctx->native_handler = display_task_consume_mailbox;
     display_spi_init(ctx, opts);
     return ctx;
 }

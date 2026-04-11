@@ -115,7 +115,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -158,9 +158,9 @@ static void do_update(Context *ctx, term display_list)
             buf = screen->pixels;
             screen->dma_out = tmp;
 
-            spi_display_dmawrite(&spi->spi_disp, memsize, screen->dma_out);
+            spi_display_dma_write(&spi->spi_disp, memsize, screen->dma_out);
         } else {
-            spi_display_dmawrite(&spi->spi_disp, memsize, buf);
+            spi_display_dma_write(&spi->spi_disp, memsize, buf);
         }
 
         transaction_in_progress = true;
@@ -172,7 +172,7 @@ static void do_update(Context *ctx, term display_list)
     }
 
     spi_device_release_bus(spi->spi_disp.handle);
-    destroy_items(items, len);
+    display_items_delete(items, len);
 }
 
 static void process_message(Message *message, Context *ctx)
@@ -211,14 +211,14 @@ static void process_message(Message *message, Context *ctx)
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
 
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
 Context *memory_lcd_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
-    ctx->native_handler = display_driver_consume_mailbox;
+    ctx->native_handler = display_task_consume_mailbox;
     display_init(ctx, opts);
     return ctx;
 }
@@ -278,5 +278,5 @@ static void display_init(Context *ctx, term opts)
         gpio_set_level(en_gpio, 1);
     }
 
-    xTaskCreate(display_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
 }

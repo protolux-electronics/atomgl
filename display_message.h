@@ -24,6 +24,6 @@
 #include <globalcontext.h>
 #include <term.h>
 
-void send_message(term pid, term message, GlobalContext *global);
+void display_message_send(term pid, term message, GlobalContext *global);
 
 #endif

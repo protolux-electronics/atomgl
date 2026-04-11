@@ -33,7 +33,7 @@
 
 #include "display_common.h"
 
-bool spi_display_dmawrite(struct SPIDisplay *spi_data, int data_len, const void *data)
+bool spi_display_dma_write(struct SPIDisplay *spi_data, int data_len, const void *data)
 {
     memset(&spi_data->transaction, 0, sizeof(spi_transaction_t));
 
@@ -44,7 +44,7 @@ bool spi_display_dmawrite(struct SPIDisplay *spi_data, int data_len, const void 
 
     int ret = spi_device_queue_trans(spi_data->handle, &spi_data->transaction, portMAX_DELAY);
     if (UNLIKELY(ret != ESP_OK)) {
-        fprintf(stderr, "spidmawrite: transmit error\n");
+        fprintf(stderr, "spi_display_dma_write: transmit error\n");
         return false;
     }
 

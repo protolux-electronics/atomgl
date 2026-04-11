@@ -20,7 +20,7 @@
 
 #include "display_message.h"
 
-void send_message(term pid, term message, GlobalContext *global)
+void display_message_send(term pid, term message, GlobalContext *global)
 {
     int local_process_id = term_to_local_process_id(pid);
     globalcontext_send_message(global, local_process_id, message);

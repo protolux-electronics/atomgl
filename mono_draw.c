@@ -336,22 +336,22 @@ int mono_draw_x(const struct MonoScreen *screen,
 
         int drawn_pixels = 0;
         switch (items[i].primitive) {
-            case Image:
+            case PrimitiveImage:
                 //fprintf(stderr, "Image\n");
                 drawn_pixels = mono_draw_image_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case ScaledCroppedImage:
+            case PrimitiveScaledCroppedImage:
                 //fprintf(stderr, "ScaledCroppedImage\n");
                 drawn_pixels = mono_draw_scaled_cropped_img_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 //fprintf(stderr, "Rect\n");
                 drawn_pixels = mono_draw_rect_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;
 
-            case Text:
+            case PrimitiveText:
                 //fprintf(stderr, "Text\n");
                 drawn_pixels = mono_draw_text_x(screen, line_buf, xpos, ypos, max_line_len, item);
                 break;

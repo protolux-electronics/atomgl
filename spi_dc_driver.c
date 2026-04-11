@@ -25,31 +25,31 @@
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
 
-void spi_dc_writedata(struct SPIDCBus *bus, uint32_t data)
+void spi_dc_write_data(struct SPIDCBus *bus, uint32_t data)
 {
     spi_device_acquire_bus(bus->spi_disp.handle, portMAX_DELAY);
     spi_display_write(&bus->spi_disp, 8, data);
     spi_device_release_bus(bus->spi_disp.handle);
 }
 
-void spi_dc_writecommand(struct SPIDCBus *bus, uint8_t cmd)
+void spi_dc_write_command(struct SPIDCBus *bus, uint8_t cmd)
 {
     gpio_set_level(bus->dc_gpio, 0);
-    spi_dc_writedata(bus, cmd);
+    spi_dc_write_data(bus, cmd);
     gpio_set_level(bus->dc_gpio, 1);
 }
 
-void spi_dc_writecmddata(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t length)
+void spi_dc_write_cmd_data(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t data_len)
 {
-    spi_dc_writecommand(bus, cmd);
-    for (int i = 0; i < length; i++) {
-        spi_dc_writedata(bus, data[i]);
+    spi_dc_write_command(bus, cmd);
+    for (int i = 0; i < data_len; i++) {
+        spi_dc_write_data(bus, data[i]);
     }
 }
 
-void spi_dc_writedatan(struct SPIDCBus *bus, const uint8_t *data, size_t length)
+void spi_dc_write_data_n(struct SPIDCBus *bus, const uint8_t *data, size_t data_len)
 {
-    for (size_t i = 0; i < length; i++) {
-        spi_dc_writedata(bus, data[i]);
+    for (size_t i = 0; i < data_len; i++) {
+        spi_dc_write_data(bus, data[i]);
     }
 }

@@ -66,7 +66,7 @@ void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
 #endif /* ESP_PLATFORM */
 #endif /* ENABLE_UFONT */
 
-void init_item(BaseDisplayItem *item, term req, Context *ctx)
+void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
 {
     item->owns_data = false;
 
@@ -74,7 +74,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
 
     if (cmd == context_make_atom(ctx, "\x5"
                                       "image")) {
-        item->primitive = Image;
+        item->primitive = PrimitiveImage;
         item->x = term_to_int(term_get_tuple_element(req, 1));
         item->y = term_to_int(term_get_tuple_element(req, 2));
 
@@ -101,7 +101,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
         item->data.image_data.pix = term_binary_data(term_get_tuple_element(img, 3));
 
     } else if (cmd == globalcontext_make_atom(ctx->global, ATOM_STR("\x14", "scaled_cropped_image"))) {
-        item->primitive = ScaledCroppedImage;
+        item->primitive = PrimitiveScaledCroppedImage;
         item->x = term_to_int(term_get_tuple_element(req, 1));
         item->y = term_to_int(term_get_tuple_element(req, 2));
         item->width = term_to_int(term_get_tuple_element(req, 3));
@@ -138,7 +138,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
 
     } else if (cmd == context_make_atom(ctx, "\x4"
                                              "rect")) {
-        item->primitive = Rect;
+        item->primitive = PrimitiveRect;
         item->x = term_to_int(term_get_tuple_element(req, 1));
         item->y = term_to_int(term_get_tuple_element(req, 2));
         item->width = term_to_int(term_get_tuple_element(req, 3));
@@ -169,7 +169,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
         term font = term_get_tuple_element(req, 3);
 
         if (font == globalcontext_make_atom(ctx->global, "\xB" "default16px")) {
-            item->primitive = Text;
+            item->primitive = PrimitiveText;
             item->height = 16;
             item->width = strlen(text) * 8;
             item->brcolor = brcolor;
@@ -215,7 +215,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
                 return;
             }
 
-            item->primitive = Image;
+            item->primitive = PrimitiveImage;
             item->width = surface.width;
             item->height = surface.height;
             item->brcolor = 0;
@@ -225,7 +225,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
             fprintf(stderr, "unsupported font: ");
             term_display(stderr, font, ctx);
             fprintf(stderr, "\n");
-            item->primitive = Text;
+            item->primitive = PrimitiveText;
             item->height = 16;
             item->width = strlen(text) * 8;
             item->brcolor = brcolor;
@@ -240,7 +240,7 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
         term_display(stderr, req, ctx);
         fprintf(stderr, "\n");
 
-        item->primitive = Invalid;
+        item->primitive = PrimitiveInvalid;
         item->x = -1;
         item->y = -1;
         item->width = 1;
@@ -248,22 +248,22 @@ void init_item(BaseDisplayItem *item, term req, Context *ctx)
     }
 }
 
-void destroy_items(BaseDisplayItem *items, int items_count)
+void display_items_delete(BaseDisplayItem *items, int items_count)
 {
     for (int i = 0; i < items_count; i++) {
         BaseDisplayItem *item = &items[i];
 
         switch (item->primitive) {
-            case Image:
+            case PrimitiveImage:
                 if (item->owns_data) {
                     free((void *) item->data.image_data.pix);
                 }
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 break;
 
-            case Text:
+            case PrimitiveText:
                 free((char *) item->data.text_data.text);
                 break;
 

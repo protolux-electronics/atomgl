@@ -126,17 +126,17 @@ static bool cmp_display_item(BaseDisplayItem *a, BaseDisplayItem *b)
     }
 
     switch (a->primitive) {
-        case Image:
+        case PrimitiveImage:
             return a->data.image_data.pix == b->data.image_data.pix;
 
-        case Rect:
+        case PrimitiveRect:
             return true;
 
-        case Text:
+        case PrimitiveText:
             return (a->data.text_data.fgcolor == b->data.text_data.fgcolor) &&
                 !strcmp(a->data.text_data.text, b->data.text_data.text);
 
-        case ScaledCroppedImage:
+        case PrimitiveScaledCroppedImage:
             return (a->data.image_data.pix == b->data.image_data.pix) &&
                 (a->x_scale == b->x_scale) && (a->y_scale == b->y_scale) &&
                 (a->source_x == b->source_x) && (a->source_y == b->source_y);
@@ -456,19 +456,19 @@ static int draw_x(int xpos, int ypos, BaseDisplayItem *items, int items_count)
 
         int drawn_pixels = 0;
         switch (items[i].primitive) {
-            case Image:
+            case PrimitiveImage:
                 drawn_pixels = draw_image_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case ScaledCroppedImage:
+            case PrimitiveScaledCroppedImage:
                 drawn_pixels = draw_scaled_cropped_img_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 drawn_pixels = draw_rect_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case Text:
+            case PrimitiveText:
                 drawn_pixels = draw_text_x(xpos, ypos, max_line_len, item);
                 break;
 
@@ -496,7 +496,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -504,7 +504,7 @@ static void do_update(Context *ctx, term display_list)
     damaged.valid = false;
     dumb_diff(prev_items, prev_items_len, items, len, &damaged);
     if (prev_items) {
-        destroy_items(prev_items, prev_items_len);
+        display_items_delete(prev_items, prev_items_len);
         destroy_message(prev_message, ctx->global);
     }
     prev_items = items;
@@ -735,7 +735,7 @@ void send_keyboard_event(struct KeyboardEvent *keyb, Context *ctx)
         term_put_tuple_element(event_tuple, 2, term_from_int(millis));
         term_put_tuple_element(event_tuple, 3, event_data_tuple);
 
-        send_message(keyboard_pid, event_tuple, glb);
+        display_message_send(keyboard_pid, event_tuple, glb);
 
         END_WITH_STACK_HEAP(heap, glb);
     }
@@ -807,7 +807,7 @@ void send_mouse_event(struct MouseEvent *mouse, Context *ctx)
         term_put_tuple_element(event_tuple, 2, term_from_int(millis));
         term_put_tuple_element(event_tuple, 3, event_data_tuple);
 
-        send_message(keyboard_pid, event_tuple, glb);
+        display_message_send(keyboard_pid, event_tuple, glb);
 
         END_WITH_STACK_HEAP(heap, glb);
     }

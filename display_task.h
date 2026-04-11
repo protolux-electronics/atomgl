@@ -34,7 +34,7 @@ struct DisplayTaskArgs
     Context *ctx;
 };
 
-NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
-void display_process_messages(void *arg);
+NativeHandlerResult display_task_consume_mailbox(Context *ctx);
+void display_task_process_messages(void *arg);
 
 #endif

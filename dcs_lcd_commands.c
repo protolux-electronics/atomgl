@@ -33,12 +33,12 @@ void dcs_lcd_set_paint_area(struct SPIDCBus *bus, const struct DCSLCDScreen *scr
     x += screen->x_offset;
     y += screen->y_offset;
 
-    spi_dc_writecommand(bus, DCS_LCD_CASET);
+    spi_dc_write_command(bus, DCS_LCD_CASET);
     spi_device_acquire_bus(bus->spi_disp.handle, portMAX_DELAY);
     spi_display_write(&bus->spi_disp, 32, (x << 16) | ((x + width) - 1));
     spi_device_release_bus(bus->spi_disp.handle);
 
-    spi_dc_writecommand(bus, DCS_LCD_PASET);
+    spi_dc_write_command(bus, DCS_LCD_PASET);
     spi_device_acquire_bus(bus->spi_disp.handle, portMAX_DELAY);
     spi_display_write(&bus->spi_disp, 32, (y << 16) | ((y + height) - 1));
     spi_device_release_bus(bus->spi_disp.handle);
@@ -51,7 +51,7 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
 
     dcs_lcd_set_paint_area(bus, screen, x, y, width, height);
 
-    spi_dc_writecommand(bus, DCS_LCD_RAMWR);
+    spi_dc_write_command(bus, DCS_LCD_RAMWR);
 
     int dest_size = width * height;
     int chunks = dest_size / 1024;
@@ -67,7 +67,7 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
             for (int j = 0; j < 1024; j++) {
                 tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
             }
-            spi_display_dmawrite(&bus->spi_disp, 1024 * sizeof(uint16_t), tmpbuf);
+            spi_display_dma_write(&bus->spi_disp, 1024 * sizeof(uint16_t), tmpbuf);
         }
 
         int last_chunk_size = dest_size - chunks * 1024;
@@ -76,7 +76,7 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
             for (int j = 0; j < last_chunk_size; j++) {
                 tmpbuf[j] = SPI_SWAP_DATA_TX(data_b[j], 16);
             }
-            spi_display_dmawrite(&bus->spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
+            spi_display_dma_write(&bus->spi_disp, last_chunk_size * sizeof(uint16_t), tmpbuf);
         }
 
         free(tmpbuf);
@@ -105,7 +105,7 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
                 tmpbuf[j * 3 + 2] = b8;
             }
 
-            spi_display_dmawrite(&bus->spi_disp, n * 3, tmpbuf);
+            spi_display_dma_write(&bus->spi_disp, n * 3, tmpbuf);
             i += n;
         }
 
