@@ -248,9 +248,9 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
     }
 }
 
-void display_items_delete(BaseDisplayItem *items, int items_count)
+void display_items_delete(BaseDisplayItem items[], size_t items_len)
 {
-    for (int i = 0; i < items_count; i++) {
+    for (size_t i = 0; i < items_len; i++) {
         BaseDisplayItem *item = &items[i];
 
         switch (item->primitive) {

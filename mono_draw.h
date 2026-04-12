@@ -49,10 +49,10 @@ int mono_draw_scaled_cropped_img_x(const struct MonoScreen *screen,
     BaseDisplayItem *item);
 
 int mono_find_max_line_len(const struct MonoScreen *screen,
-    BaseDisplayItem *items, int count, int xpos, int ypos);
+    BaseDisplayItem items[], size_t items_len, int xpos, int ypos);
 
 int mono_draw_x(const struct MonoScreen *screen,
     uint8_t *line_buf, int xpos, int ypos,
-    BaseDisplayItem *items, int items_count);
+    BaseDisplayItem items[], size_t items_len);
 
 #endif

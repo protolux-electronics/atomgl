@@ -32,11 +32,11 @@
 #define CHAR_WIDTH 8
 
 int dcs_lcd_find_max_line_len(const struct DCSLCDScreen *screen,
-    BaseDisplayItem *items, int count, int xpos, int ypos)
+    BaseDisplayItem items[], size_t items_len, int xpos, int ypos)
 {
     int line_len = screen->w - xpos;
 
-    for (int i = 0; i < count; i++) {
+    for (size_t i = 0; i < items_len; i++) {
         BaseDisplayItem *item = &items[i];
 
         if ((xpos < item->x) && (ypos >= item->y) && (ypos < item->y + item->height)) {
@@ -232,11 +232,11 @@ int dcs_lcd_draw_scaled_cropped_img_x(const struct DCSLCDScreen *screen,
 }
 
 int dcs_lcd_draw_x(const struct DCSLCDScreen *screen,
-    int xpos, int ypos, BaseDisplayItem *items, int items_count)
+    int xpos, int ypos, BaseDisplayItem items[], size_t items_len)
 {
     bool below = false;
 
-    for (int i = 0; i < items_count; i++) {
+    for (size_t i = 0; i < items_len; i++) {
         BaseDisplayItem *item = &items[i];
         if ((xpos < item->x) || (xpos >= item->x + item->width) || (ypos < item->y) || (ypos >= item->y + item->height)) {
             continue;

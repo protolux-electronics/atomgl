@@ -33,16 +33,16 @@
 
 #include "display_common.h"
 
-bool spi_display_dma_write(struct SPIDisplay *spi_data, int data_len, const void *data)
+bool spi_display_dma_write(struct SPIDisplay *spi_disp, size_t data_len, const void *data)
 {
-    memset(&spi_data->transaction, 0, sizeof(spi_transaction_t));
+    memset(&spi_disp->transaction, 0, sizeof(spi_transaction_t));
 
-    spi_data->transaction.flags = 0;
-    spi_data->transaction.length = data_len * 8;
-    spi_data->transaction.addr = 0;
-    spi_data->transaction.tx_buffer = data;
+    spi_disp->transaction.flags = 0;
+    spi_disp->transaction.length = data_len * 8;
+    spi_disp->transaction.addr = 0;
+    spi_disp->transaction.tx_buffer = data;
 
-    int ret = spi_device_queue_trans(spi_data->handle, &spi_data->transaction, portMAX_DELAY);
+    int ret = spi_device_queue_trans(spi_disp->handle, &spi_disp->transaction, portMAX_DELAY);
     if (UNLIKELY(ret != ESP_OK)) {
         fprintf(stderr, "spi_display_dma_write: transmit error\n");
         return false;
@@ -51,22 +51,22 @@ bool spi_display_dma_write(struct SPIDisplay *spi_data, int data_len, const void
     return true;
 }
 
-bool spi_display_write(struct SPIDisplay *spi_data, int data_len, uint32_t data)
+bool spi_display_write(struct SPIDisplay *spi_disp, size_t data_len, uint32_t data)
 {
-    memset(&spi_data->transaction, 0, sizeof(spi_transaction_t));
+    memset(&spi_disp->transaction, 0, sizeof(spi_transaction_t));
 
     uint32_t tx_data = SPI_SWAP_DATA_TX(data, data_len);
 
-    spi_data->transaction.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
-    spi_data->transaction.length = data_len;
-    spi_data->transaction.addr = 0;
-    spi_data->transaction.tx_data[0] = tx_data;
-    spi_data->transaction.tx_data[1] = (tx_data >> 8) & 0xFF;
-    spi_data->transaction.tx_data[2] = (tx_data >> 16) & 0xFF;
-    spi_data->transaction.tx_data[3] = (tx_data >> 24) & 0xFF;
+    spi_disp->transaction.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_USE_RXDATA;
+    spi_disp->transaction.length = data_len;
+    spi_disp->transaction.addr = 0;
+    spi_disp->transaction.tx_data[0] = tx_data;
+    spi_disp->transaction.tx_data[1] = (tx_data >> 8) & 0xFF;
+    spi_disp->transaction.tx_data[2] = (tx_data >> 16) & 0xFF;
+    spi_disp->transaction.tx_data[3] = (tx_data >> 24) & 0xFF;
 
     // this function is meant for small amount of data so polling is fine here
-    int ret = spi_device_polling_transmit(spi_data->handle, &spi_data->transaction);
+    int ret = spi_device_polling_transmit(spi_disp->handle, &spi_disp->transaction);
     if (UNLIKELY(ret != ESP_OK)) {
         fprintf(stderr, "spiwrite: transmit error\n");
         return false;

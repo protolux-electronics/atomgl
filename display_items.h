@@ -22,6 +22,7 @@
 #define _DISPLAY_ITEMS_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <context.h>
@@ -86,7 +87,7 @@ struct BaseDisplayItem
 typedef struct BaseDisplayItem BaseDisplayItem;
 
 void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx);
-void display_items_delete(BaseDisplayItem *items, int items_count);
+void display_items_delete(BaseDisplayItem items[], size_t items_len);
 
 #endif
 

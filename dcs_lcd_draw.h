@@ -37,9 +37,9 @@ int dcs_lcd_draw_scaled_cropped_img_x(const struct DCSLCDScreen *screen,
     int xpos, int ypos, int max_line_len, BaseDisplayItem *item);
 
 int dcs_lcd_find_max_line_len(const struct DCSLCDScreen *screen,
-    BaseDisplayItem *items, int count, int xpos, int ypos);
+    BaseDisplayItem items[], size_t items_len, int xpos, int ypos);
 
 int dcs_lcd_draw_x(const struct DCSLCDScreen *screen,
-    int xpos, int ypos, BaseDisplayItem *items, int items_count);
+    int xpos, int ypos, BaseDisplayItem items[], size_t items_len);
 
 #endif
