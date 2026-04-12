@@ -65,6 +65,7 @@ if (ATOMIC_POINTER_LOCK_FREE_IS_TWO)
     target_compile_definitions(avm_display_port_driver PUBLIC HAVE_ATOMIC)
 endif()
 
+target_compile_definitions(avm_display_port_driver PRIVATE ENABLE_UFONT)
 target_link_libraries(avm_display_port_driver ${SDL_LIBRARY} ${ZLIB_LIBRARIES})
 set_property(TARGET avm_display_port_driver PROPERTY C_STANDARD 11)
 set_property(TARGET avm_display_port_driver PROPERTY PREFIX "")

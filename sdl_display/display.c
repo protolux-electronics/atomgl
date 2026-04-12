@@ -231,28 +231,6 @@ static inline Uint32 uint32_color_to_surface(struct Screen *screen, uint32_t col
     return SDL_MapRGB(screen->format, (color >> 24) & 0xFF, (color >> 16) & 0xFF, (color >> 8) & 0xFF);
 }
 
-struct Surface
-{
-    int width;
-    int height;
-    void *buffer;
-};
-
-void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
-{
-    struct Surface *surface = buffer;
-
-    if (xpos < 0 || ypos < 0 || xpos >= surface->width || ypos >= surface->height) {
-        return;
-    }
-
-    Uint32 *pixmem32b = (Uint32 *) (((uint8_t *) surface->buffer) + surface->width * ypos * BPP + xpos * BPP);
-
-    //TODO: handle other colors than black
-    UNUSED(color);
-    *pixmem32b = 0xFF000000;
-}
-
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
 {
     int x = item->x;

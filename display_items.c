@@ -30,7 +30,6 @@
 #include "ufontlib.h"
 extern UFontManager *ufont_manager;
 
-#ifdef ESP_PLATFORM
 struct Surface
 {
     int width;
@@ -63,7 +62,6 @@ void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
     uint8_t alpha = (15 - (color >> 4)) * 17;
     *pixel = ((uint32_t) alpha << 24) | (surface->fg_color & 0x00FFFFFFu);
 }
-#endif /* ESP_PLATFORM */
 #endif /* ENABLE_UFONT */
 
 void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
