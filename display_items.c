@@ -216,7 +216,7 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
             item->primitive = PrimitiveImage;
             item->width = surface.width;
             item->height = surface.height;
-            item->brcolor = 0;
+            item->brcolor = brcolor;
             item->data.image_data.pix = surface.buffer;
             item->owns_data = true;
 #else
