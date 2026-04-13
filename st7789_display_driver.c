@@ -65,19 +65,6 @@
 #define SPI_CLOCK_HZ 40000000
 #define SPI_MODE 0
 
-#define ST7789_RAMCTRL 0xB0
-#define ST7789_PORCTRL 0xB2
-#define ST7789_GCTRL 0xB7
-#define ST7789_VCOMS 0xBB
-#define ST7789_LCMCTRL 0xC0
-#define ST7789_VDVVRHEN 0xC2
-#define ST7789_VRHS 0xC3
-#define ST7789_VDVSET 0xC4
-#define ST7789_FRCTR2 0xC6
-#define ST7789_PWCTRL1 0xD0
-#define ST7789_PVGAMCTRL 0xE0
-#define ST7789_NVGAMCTRL 0xE1
-
 #include "font_data.h"
 
 static const char *TAG = "st7789_display_driver";
@@ -105,8 +92,6 @@ struct DCSLCDDriver
 static struct DCSLCDScreen *screen;
 
 static void display_init(Context *ctx, term opts);
-static void display_init_alt_gamma_2(struct DCSLCDDriver *driver);
-static void display_init_std(struct DCSLCDDriver *driver);
 static void display_init_using_list(struct DCSLCDDriver *driver, term init_list);
 
 static void do_update(Context *ctx, term display_list)
@@ -326,10 +311,10 @@ static void display_init(Context *ctx, term opts)
         int str_ok;
         char *init_seq_type_string = interop_term_to_string(init_seq_type_term, &str_ok);
         if (str_ok && !strcmp(init_seq_type_string, "alt_gamma_2")) {
-            display_init_alt_gamma_2(driver);
+            dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_st7789_alt);
             free(init_seq_type_string);
         } else {
-            display_init_std(driver);
+            dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_st7789_std);
         }
 
         set_rotation(driver, driver->rotation);
@@ -348,205 +333,6 @@ static void display_init(Context *ctx, term opts)
     backlight_gpio_init(&backlight_config);
 
     xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
-}
-
-static void display_init_alt_gamma_2(struct DCSLCDDriver *driver)
-{
-    spi_dc_write_command(&driver->bus, DCS_LCD_SLPOUT);
-    delay(120);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_NORON);
-
-    // - display and color format setting - //
-    spi_dc_write_command(&driver->bus, DCS_LCD_MADCTL);
-    spi_dc_write_data(&driver->bus, 0x00);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_COLMOD);
-    spi_dc_write_data(&driver->bus, 0x55);
-    delay(10);
-
-    // - ST7789V frame rate setting - //
-    spi_dc_write_command(&driver->bus, ST7789_PORCTRL);
-    spi_dc_write_data(&driver->bus, 0x0C);
-    spi_dc_write_data(&driver->bus, 0x0C);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x33);
-    spi_dc_write_data(&driver->bus, 0x33);
-
-    spi_dc_write_command(&driver->bus, ST7789_GCTRL);
-    spi_dc_write_data(&driver->bus, 0x75);
-
-    // - ST7789V power setting - //
-    spi_dc_write_command(&driver->bus, ST7789_VCOMS);
-    spi_dc_write_data(&driver->bus, 0x1A);
-
-    spi_dc_write_command(&driver->bus, ST7789_LCMCTRL);
-    spi_dc_write_data(&driver->bus, 0x2C);
-
-    spi_dc_write_command(&driver->bus, ST7789_VDVVRHEN);
-    spi_dc_write_data(&driver->bus, 0x01);
-
-    spi_dc_write_command(&driver->bus, ST7789_VRHS);
-    spi_dc_write_data(&driver->bus, 0x13);
-
-    spi_dc_write_command(&driver->bus, ST7789_VDVSET);
-    spi_dc_write_data(&driver->bus, 0x20);
-
-    spi_dc_write_command(&driver->bus, ST7789_FRCTR2);
-    spi_dc_write_data(&driver->bus, 0x0F);
-
-    spi_dc_write_command(&driver->bus, ST7789_PWCTRL1);
-    spi_dc_write_data(&driver->bus, 0xA4);
-    spi_dc_write_data(&driver->bus, 0xA1);
-
-    // - ST7789V gamma setting - //
-    spi_dc_write_command(&driver->bus, ST7789_PVGAMCTRL);
-    spi_dc_write_data(&driver->bus, 0xD0);
-    spi_dc_write_data(&driver->bus, 0x0D);
-    spi_dc_write_data(&driver->bus, 0x14);
-    spi_dc_write_data(&driver->bus, 0x0D);
-    spi_dc_write_data(&driver->bus, 0x0D);
-    spi_dc_write_data(&driver->bus, 0x09);
-    spi_dc_write_data(&driver->bus, 0x38);
-    spi_dc_write_data(&driver->bus, 0x44);
-    spi_dc_write_data(&driver->bus, 0x4E);
-    spi_dc_write_data(&driver->bus, 0x3A);
-    spi_dc_write_data(&driver->bus, 0x17);
-    spi_dc_write_data(&driver->bus, 0x18);
-    spi_dc_write_data(&driver->bus, 0x2F);
-    spi_dc_write_data(&driver->bus, 0x30);
-
-    spi_dc_write_command(&driver->bus, ST7789_NVGAMCTRL);
-    spi_dc_write_data(&driver->bus, 0xD0);
-    spi_dc_write_data(&driver->bus, 0x09);
-    spi_dc_write_data(&driver->bus, 0x0F);
-    spi_dc_write_data(&driver->bus, 0x08);
-    spi_dc_write_data(&driver->bus, 0x07);
-    spi_dc_write_data(&driver->bus, 0x14);
-    spi_dc_write_data(&driver->bus, 0x37);
-    spi_dc_write_data(&driver->bus, 0x44);
-    spi_dc_write_data(&driver->bus, 0x4D);
-    spi_dc_write_data(&driver->bus, 0x38);
-    spi_dc_write_data(&driver->bus, 0x15);
-    spi_dc_write_data(&driver->bus, 0x16);
-    spi_dc_write_data(&driver->bus, 0x2C);
-    spi_dc_write_data(&driver->bus, 0x3E);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_CASET);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0xEF); // 239
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_PASET);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0x3F); // 319
-}
-
-static void display_init_std(struct DCSLCDDriver *driver)
-{
-    spi_dc_write_command(&driver->bus, DCS_LCD_SLPOUT);
-    delay(120);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_NORON);
-
-    // - display and color format setting - //
-    spi_dc_write_command(&driver->bus, DCS_LCD_MADCTL);
-    spi_dc_write_data(&driver->bus, 0x00);
-
-    spi_dc_write_command(&driver->bus, 0xB6);
-    spi_dc_write_data(&driver->bus, 0x0A);
-    spi_dc_write_data(&driver->bus, 0x82);
-
-    spi_dc_write_command(&driver->bus, ST7789_RAMCTRL);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0xE0);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_COLMOD);
-    spi_dc_write_data(&driver->bus, 0x55);
-    delay(10);
-
-    // - ST7789V frame rate setting - //
-    spi_dc_write_command(&driver->bus, ST7789_PORCTRL);
-    spi_dc_write_data(&driver->bus, 0x0C);
-    spi_dc_write_data(&driver->bus, 0x0C);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x33);
-    spi_dc_write_data(&driver->bus, 0x33);
-
-    spi_dc_write_command(&driver->bus, ST7789_GCTRL);
-    spi_dc_write_data(&driver->bus, 0x35);
-
-    // - ST7789V power setting - //
-    spi_dc_write_command(&driver->bus, ST7789_VCOMS);
-    spi_dc_write_data(&driver->bus, 0x28);
-
-    spi_dc_write_command(&driver->bus, ST7789_LCMCTRL);
-    spi_dc_write_data(&driver->bus, 0x0C);
-
-    spi_dc_write_command(&driver->bus, ST7789_VDVVRHEN);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0xFF);
-
-    spi_dc_write_command(&driver->bus, ST7789_VRHS);
-    spi_dc_write_data(&driver->bus, 0x10);
-
-    spi_dc_write_command(&driver->bus, ST7789_VDVSET);
-    spi_dc_write_data(&driver->bus, 0x20);
-
-    spi_dc_write_command(&driver->bus, ST7789_FRCTR2);
-    spi_dc_write_data(&driver->bus, 0x0F);
-
-    spi_dc_write_command(&driver->bus, ST7789_PWCTRL1);
-    spi_dc_write_data(&driver->bus, 0xA4);
-    spi_dc_write_data(&driver->bus, 0xA1);
-
-    // - ST7789V gamma setting - //
-    spi_dc_write_command(&driver->bus, ST7789_PVGAMCTRL);
-    spi_dc_write_data(&driver->bus, 0xD0);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x02);
-    spi_dc_write_data(&driver->bus, 0x07);
-    spi_dc_write_data(&driver->bus, 0x0A);
-    spi_dc_write_data(&driver->bus, 0x28);
-    spi_dc_write_data(&driver->bus, 0x32);
-    spi_dc_write_data(&driver->bus, 0x44);
-    spi_dc_write_data(&driver->bus, 0x42);
-    spi_dc_write_data(&driver->bus, 0x06);
-    spi_dc_write_data(&driver->bus, 0x0E);
-    spi_dc_write_data(&driver->bus, 0x12);
-    spi_dc_write_data(&driver->bus, 0x14);
-    spi_dc_write_data(&driver->bus, 0x17);
-
-    spi_dc_write_command(&driver->bus, ST7789_NVGAMCTRL);
-    spi_dc_write_data(&driver->bus, 0xD0);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x02);
-    spi_dc_write_data(&driver->bus, 0x07);
-    spi_dc_write_data(&driver->bus, 0x0A);
-    spi_dc_write_data(&driver->bus, 0x28);
-    spi_dc_write_data(&driver->bus, 0x31);
-    spi_dc_write_data(&driver->bus, 0x54);
-    spi_dc_write_data(&driver->bus, 0x47);
-    spi_dc_write_data(&driver->bus, 0x0E);
-    spi_dc_write_data(&driver->bus, 0x1C);
-    spi_dc_write_data(&driver->bus, 0x17);
-    spi_dc_write_data(&driver->bus, 0x1B);
-    spi_dc_write_data(&driver->bus, 0x1E);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_CASET);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0xEF); // 239
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_PASET);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0x3F); // 319
 }
 
 static void display_init_using_list(struct DCSLCDDriver *driver, term init_list)
