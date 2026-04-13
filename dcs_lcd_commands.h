@@ -21,6 +21,9 @@
 #ifndef _DCS_LCD_COMMANDS_H_
 #define _DCS_LCD_COMMANDS_H_
 
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "dcs_lcd_screen.h"
 #include "spi_dc_driver.h"
 
@@ -53,5 +56,28 @@ void dcs_lcd_set_paint_area(struct SPIDCBus *bus, const struct DCSLCDScreen *scr
 
 void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen,
     int pixel_bytes, int x, int y, int width, int height, const void *imgdata);
+
+// --- Init sequence byte-array format ---
+//
+// Each entry:  [CMD] [FLAGS_LEN] [DATA_0 ... DATA_N] [DELAY_MS]
+//   CMD:        command byte (0x01-0xFF)
+//   FLAGS_LEN:  bits 6:0 = data byte count (0-127)
+//               bit 7    = delay flag (DELAY_MS byte follows data)
+//   DELAY_MS:   delay in milliseconds (0-255), present only if flag set
+//
+// End marker: single DCS_LCD_INIT_SEQ_END (0x00) byte.
+
+#define DCS_LCD_INIT_SEQ_END   0x00
+#define DCS_LCD_INIT_SEQ_DELAY 0x80
+
+void dcs_lcd_execute_init_seq(struct SPIDCBus *bus, const uint8_t *seq);
+
+// Built-in init sequences.
+extern const uint8_t dcs_lcd_init_seq_ili9341[];
+extern const uint8_t dcs_lcd_init_seq_ili9342c[];
+extern const uint8_t dcs_lcd_init_seq_ili9486[];
+extern const uint8_t dcs_lcd_init_seq_ili9488[];
+extern const uint8_t dcs_lcd_init_seq_st7789_std[];
+extern const uint8_t dcs_lcd_init_seq_st7789_alt[];
 
 #endif
