@@ -68,8 +68,7 @@ typedef enum
     DisplayTypeSh1106,
 } display_type_t;
 
-// TODO: let's change name, since also non SPI display are supported now
-struct SPI
+struct OLEDDriver
 {
     term i2c_host;
     display_type_t type;
@@ -78,8 +77,8 @@ struct SPI
     struct DisplayTaskArgs display_args;
 };
 
-#define SPI_FROM_CTX(ctx) \
-    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
+#define OLED_DRIVER_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct OLEDDriver, display_args)
 
 static struct MonoScreen *mono_screen;
 
@@ -102,14 +101,14 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = DISPLAY_WIDTH;
     int screen_height = DISPLAY_HEIGHT;
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct OLEDDriver *driver = OLED_DRIVER_FROM_CTX(ctx);
 
     int memsize = (DISPLAY_WIDTH * (PAGE_HEIGHT + 1)) / sizeof(uint8_t);
     uint8_t *buf = malloc(memsize);
     memset(buf, 0, memsize);
 
     i2c_port_t i2c_num;
-    if (i2c_driver_acquire(spi->i2c_host, &i2c_num, ctx->global) != I2CAcquireOk) {
+    if (i2c_driver_acquire(driver->i2c_host, &i2c_num, ctx->global) != I2CAcquireOk) {
         fprintf(stderr, "Invalid I2C peripheral\n");
         return;
     }
@@ -135,7 +134,7 @@ static void do_update(Context *ctx, term display_list)
             i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
             i2c_master_write_byte(cmd, 0xB0 | ypos / 8, true);
 
-            if (spi->type == DisplayTypeSh1106 || spi->type == DisplayTypeSsd1315) {
+            if (driver->type == DisplayTypeSh1106 || driver->type == DisplayTypeSsd1315) {
                 // SSD1315 and SH1106 require explicit column address reset
                 i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
                 i2c_master_write_byte(cmd, 0x00, true);
@@ -145,7 +144,7 @@ static void do_update(Context *ctx, term display_list)
             i2c_master_write_byte(cmd, CTRL_BYTE_DATA_STREAM, true);
 
 
-            if (spi->type == DisplayTypeSh1106) {
+            if (driver->type == DisplayTypeSh1106) {
                 // add 2 empty pages on sh1106 since it can have up to 132 pixels
                 // and 128 pixel screen starts at (2, 0)
                 i2c_master_write_byte(cmd, 0, true);
@@ -157,7 +156,7 @@ static void do_update(Context *ctx, term display_list)
             }
 
             // no need to send the last 2 page, the position will be set on next line again
-            // if (spi->type == DisplayTypeSh1106) {
+            // if (driver->type == DisplayTypeSh1106) {
             //    i2c_master_write_byte(cmd, 0, true);
             //    i2c_master_write_byte(cmd, 0, true);
             // }
@@ -170,7 +169,7 @@ static void do_update(Context *ctx, term display_list)
         }
     }
 
-    i2c_driver_release(spi->i2c_host, ctx->global);
+    i2c_driver_release(driver->i2c_host, ctx->global);
 
     free(buf);
     display_items_delete(items, len);
@@ -231,15 +230,15 @@ static void display_init(Context *ctx, term opts)
     mono_screen->w = DISPLAY_WIDTH;
     mono_screen->h = DISPLAY_HEIGHT;
 
-    struct SPI *spi = malloc(sizeof(struct SPI));
+    struct OLEDDriver *driver = malloc(sizeof(struct OLEDDriver));
 
-    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
-    spi->display_args.process_message_fn = process_message;
-    spi->display_args.ctx = ctx;
-    ctx->platform_data = &spi->display_args;
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    ctx->platform_data = &driver->display_args;
 
-    spi->ctx = ctx;
-    spi->type = DisplayTypeSsd1306; // Default to SSD1306
+    driver->ctx = ctx;
+    driver->type = DisplayTypeSsd1306; // Default to SSD1306
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
     int str_ok;
@@ -251,9 +250,9 @@ static void display_init(Context *ctx, term opts)
     }
 
     if (!strcmp(compat_string, "sino-wealth,sh1106")) {
-        spi->type = DisplayTypeSh1106;
+        driver->type = DisplayTypeSh1106;
     } else if (!strcmp(compat_string, "solomon-systech,ssd1315")) {
-        spi->type = DisplayTypeSsd1315;
+        driver->type = DisplayTypeSsd1315;
     }
 
     free(compat_string);
@@ -273,14 +272,14 @@ static void display_init(Context *ctx, term opts)
         fprintf(stderr, "Invalid I2C peripheral\n");
         return;
     }
-    spi->i2c_host = i2c_host;
+    driver->i2c_host = i2c_host;
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (I2C_ADDRESS << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, CTRL_BYTE_CMD_STREAM, true);
 
-    if (spi->type == DisplayTypeSsd1315) {
+    if (driver->type == DisplayTypeSsd1315) {
         /*
          * Init sequence derived from u8g2 project (BSD-2-Clause).
          * Source: https://github.com/olikraus/u8g2
@@ -344,7 +343,7 @@ static void display_init(Context *ctx, term opts)
     if (res != ESP_OK) {
         ESP_LOGE(TAG, "ssd1306/ssd1315 OLED configuration failed. error: 0x%.2X", res);
     } else {
-        xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+        xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
     }
 
     i2c_cmd_link_delete(cmd);

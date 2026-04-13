@@ -90,7 +90,7 @@
 
 static const char *TAG = "ili948x_display_driver";
 
-struct SPI
+struct DCSLCDDriver
 {
     struct SPIDCBus bus;
     int reset_gpio;
@@ -105,8 +105,8 @@ struct SPI
     struct DisplayTaskArgs display_args;
 };
 
-#define SPI_FROM_CTX(ctx) \
-    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
+#define DCS_LCD_DRIVER_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct DCSLCDDriver, display_args)
 
 static struct DCSLCDScreen *screen;
 
@@ -132,8 +132,8 @@ static inline void rgb565_swapped_line_to_rgb888(uint8_t *dst, const uint16_t *s
 
 static void display_init(Context *ctx, term opts);
 
-static void display_init_9486(struct SPI *spi);
-static void display_init_9488(struct SPI *spi);
+static void display_init_9486(struct DCSLCDDriver *driver);
+static void display_init_9488(struct DCSLCDDriver *driver);
 
 static void do_update(Context *ctx, term display_list)
 {
@@ -150,11 +150,11 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = screen->w;
     int screen_height = screen->h;
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct DCSLCDDriver *driver = DCS_LCD_DRIVER_FROM_CTX(ctx);
 
-    dcs_lcd_set_paint_area(&spi->bus, screen, 0, 0, screen_width, screen_height);
-    spi_dc_write_command(&spi->bus, DCS_LCD_RAMWR);
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    dcs_lcd_set_paint_area(&driver->bus, screen, 0, 0, screen_width, screen_height);
+    spi_dc_write_command(&driver->bus, DCS_LCD_RAMWR);
+    spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
     bool transaction_in_progress = false;
 
@@ -167,7 +167,7 @@ static void do_update(Context *ctx, term display_list)
 
         if (transaction_in_progress) {
             spi_transaction_t *trans;
-            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         // Swap scanline buffers.
@@ -175,15 +175,15 @@ static void do_update(Context *ctx, term display_list)
         screen->pixels = screen->pixels_out;
         screen->pixels_out = tmp;
 
-        if (!spi->is_ili9488) {
-            spi_display_dma_write(&spi->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+        if (!driver->is_ili9488) {
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
         } else {
             void *tmpb = screen->bytes;
             screen->bytes = screen->bytes_out;
             screen->bytes_out = tmpb;
 
             rgb565_swapped_line_to_rgb888(screen->bytes_out, screen->pixels_out, screen_width);
-            spi_display_dma_write(&spi->bus.spi_disp, screen_width * 3, screen->bytes_out);
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * 3, screen->bytes_out);
         }
 
         transaction_in_progress = true;
@@ -191,10 +191,10 @@ static void do_update(Context *ctx, term display_list)
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->bus.spi_disp.handle);
+    spi_device_release_bus(driver->bus.spi_disp.handle);
 
     display_items_delete(items, len);
 }
@@ -213,7 +213,7 @@ static void process_message(Message *message, Context *ctx)
     }
     term cmd = term_get_tuple_element(req, 0);
 
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct DCSLCDDriver *driver = DCS_LCD_DRIVER_FROM_CTX(ctx);
 
     if (cmd == context_make_atom(ctx, "\x6"
                                       "update")) {
@@ -231,7 +231,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        dcs_lcd_draw_buffer(&spi->bus, screen, spi->is_ili9488 ? 3 : 2, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&driver->bus, screen, driver->is_ili9488 ? 3 : 2, x, y, width, height, data);
 
         // draw_buffer is fire-and-forget.
         return;
@@ -256,11 +256,11 @@ static void process_message(Message *message, Context *ctx)
     END_WITH_STACK_HEAP(heap, ctx->global);
 }
 
-static void set_rotation(struct SPI *spi, int rotation)
+static void set_rotation(struct DCSLCDDriver *driver, int rotation)
 {
     uint8_t madctl = 0;
 
-    if (spi->madctl_bgr) {
+    if (driver->madctl_bgr) {
         madctl |= DCS_LCD_MAD_BGR;
     }
 
@@ -282,8 +282,8 @@ static void set_rotation(struct SPI *spi, int rotation)
             break;
     }
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_MADCTL);
-    spi_dc_write_data(&spi->bus, madctl);
+    spi_dc_write_command(&driver->bus, DCS_LCD_MADCTL);
+    spi_dc_write_data(&driver->bus, madctl);
 }
 
 Context *ili948x_display_create_port(GlobalContext *global, term opts)
@@ -298,24 +298,24 @@ static void display_init(Context *ctx, term opts)
 {
     screen = calloc(1, sizeof(struct DCSLCDScreen));
 
-    struct SPI *spi = malloc(sizeof(struct SPI));
+    struct DCSLCDDriver *driver = malloc(sizeof(struct DCSLCDDriver));
 
-    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
-    spi->display_args.process_message_fn = process_message;
-    spi->display_args.ctx = ctx;
-    ctx->platform_data = &spi->display_args;
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    ctx->platform_data = &driver->display_args;
 
-    spi->ctx = ctx;
+    driver->ctx = ctx;
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
     spi_config.mode = SPI_MODE;
     spi_config.clock_speed_hz = SPI_CLOCK_HZ;
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->bus.spi_disp, &spi_config);
+    spi_display_init(&driver->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->bus.dc_gpio, ctx->global);
-    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &spi->reset_gpio, ctx->global);
+    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &driver->bus.dc_gpio, ctx->global);
+    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &driver->reset_gpio, ctx->global);
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
     int str_ok;
@@ -334,20 +334,20 @@ static void display_init(Context *ctx, term opts)
     if (!is_ili9486 && !is_ili9488) {
         ok = false;
     }
-    spi->is_ili9488 = is_ili9488;
+    driver->is_ili9488 = is_ili9488;
 
     // color_order: rgb|bgr (default: bgr)
     term color_order_term = interop_kv_get_value_default(opts, ATOM_STR("\xB", "color_order"), term_nil(), ctx->global);
 
     if (term_is_nil(color_order_term)) {
-        spi->madctl_bgr = true;
+        driver->madctl_bgr = true;
     } else if (term_is_atom(color_order_term)) {
         if (color_order_term == context_make_atom(ctx, "\x3"
                                                        "rgb")) {
-            spi->madctl_bgr = false;
+            driver->madctl_bgr = false;
         } else if (color_order_term == context_make_atom(ctx, "\x3"
                                                               "bgr")) {
-            spi->madctl_bgr = true;
+            driver->madctl_bgr = true;
         } else {
             ok = false;
         }
@@ -357,7 +357,7 @@ static void display_init(Context *ctx, term opts)
 
     term rotation = interop_kv_get_value_default(opts, ATOM_STR("\x8", "rotation"), term_from_int(0), ctx->global);
     ok = ok && term_is_integer(rotation);
-    spi->rotation = term_to_int(rotation);
+    driver->rotation = term_to_int(rotation);
 
     term invon = interop_kv_get_value_default(opts, ATOM_STR("\x10", "enable_tft_invon"), FALSE_ATOM, ctx->global);
     ok = ok && ((invon == TRUE_ATOM) || (invon == FALSE_ATOM));
@@ -369,7 +369,7 @@ static void display_init(Context *ctx, term opts)
     }
 
     // Swap w/h for 90/270.
-    if (spi->rotation & 1) {
+    if (driver->rotation & 1) {
         screen->w = ILI948X_TFTHEIGHT;
         screen->h = ILI948X_TFTWIDTH;
     } else {
@@ -380,7 +380,7 @@ static void display_init(Context *ctx, term opts)
     screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
     screen->pixels_out = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
 
-    if (spi->is_ili9488) {
+    if (driver->is_ili9488) {
         screen->bytes = heap_caps_malloc(screen->w * 3, MALLOC_CAP_DMA);
         screen->bytes_out = heap_caps_malloc(screen->w * 3, MALLOC_CAP_DMA);
     } else {
@@ -389,197 +389,197 @@ static void display_init(Context *ctx, term opts)
     }
 
     // Reset.
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
-    gpio_set_direction(spi->reset_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_level(spi->reset_gpio, 1);
+    spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
+    gpio_set_direction(driver->reset_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(driver->reset_gpio, 1);
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    gpio_set_level(spi->reset_gpio, 0);
+    gpio_set_level(driver->reset_gpio, 0);
     vTaskDelay(50 / portTICK_PERIOD_MS);
-    gpio_set_level(spi->reset_gpio, 1);
-    spi_device_release_bus(spi->bus.spi_disp.handle);
+    gpio_set_level(driver->reset_gpio, 1);
+    spi_device_release_bus(driver->bus.spi_disp.handle);
 
-    gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_direction(driver->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_SWRESET);
+    spi_dc_write_command(&driver->bus, DCS_LCD_SWRESET);
 
     vTaskDelay(5 / portTICK_PERIOD_MS);
 
-    if (spi->is_ili9488) {
-        display_init_9488(spi);
+    if (driver->is_ili9488) {
+        display_init_9488(driver);
     } else {
-        display_init_9486(spi);
+        display_init_9486(driver);
     }
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_SLPOUT);
+    spi_dc_write_command(&driver->bus, DCS_LCD_SLPOUT);
 
     vTaskDelay(120 / portTICK_PERIOD_MS);
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_DISPON);
+    spi_dc_write_command(&driver->bus, DCS_LCD_DISPON);
 
     if (enable_tft_invon) {
-        spi_dc_write_command(&spi->bus, DCS_LCD_INVON);
+        spi_dc_write_command(&driver->bus, DCS_LCD_INVON);
     } else {
-        spi_dc_write_command(&spi->bus, DCS_LCD_INVOFF);
+        spi_dc_write_command(&driver->bus, DCS_LCD_INVOFF);
     }
 
-    set_rotation(spi, spi->rotation);
+    set_rotation(driver, driver->rotation);
 
     struct BacklightGPIOConfig backlight_config;
     backlight_gpio_init_config(&backlight_config);
     backlight_gpio_parse_config(&backlight_config, opts, ctx->global);
     backlight_gpio_init(&backlight_config);
 
-    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
 }
 
-static void display_init_9486(struct SPI *spi)
+static void display_init_9486(struct DCSLCDDriver *driver)
 {
-    spi_dc_write_command(&spi->bus, ILI948X_IFMODE);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_IFMODE);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_COLMOD);
-    spi_dc_write_data(&spi->bus, 0x55);
+    spi_dc_write_command(&driver->bus, DCS_LCD_COLMOD);
+    spi_dc_write_data(&driver->bus, 0x55);
 
-    spi_dc_write_command(&spi->bus, ILI948X_PWRCTR3);
-    spi_dc_write_data(&spi->bus, 0x44);
+    spi_dc_write_command(&driver->bus, ILI948X_PWRCTR3);
+    spi_dc_write_data(&driver->bus, 0x44);
 
-    spi_dc_write_command(&spi->bus, ILI948X_VMCTR1);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_VMCTR1);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, ILI948X_PGAMCTRL);
-    spi_dc_write_data(&spi->bus, 0x0f);
-    spi_dc_write_data(&spi->bus, 0x1f);
-    spi_dc_write_data(&spi->bus, 0x1c);
-    spi_dc_write_data(&spi->bus, 0x0c);
-    spi_dc_write_data(&spi->bus, 0x0f);
-    spi_dc_write_data(&spi->bus, 0x08);
-    spi_dc_write_data(&spi->bus, 0x48);
-    spi_dc_write_data(&spi->bus, 0x98);
-    spi_dc_write_data(&spi->bus, 0x37);
-    spi_dc_write_data(&spi->bus, 0x0a);
-    spi_dc_write_data(&spi->bus, 0x13);
-    spi_dc_write_data(&spi->bus, 0x04);
-    spi_dc_write_data(&spi->bus, 0x11);
-    spi_dc_write_data(&spi->bus, 0x0d);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_PGAMCTRL);
+    spi_dc_write_data(&driver->bus, 0x0f);
+    spi_dc_write_data(&driver->bus, 0x1f);
+    spi_dc_write_data(&driver->bus, 0x1c);
+    spi_dc_write_data(&driver->bus, 0x0c);
+    spi_dc_write_data(&driver->bus, 0x0f);
+    spi_dc_write_data(&driver->bus, 0x08);
+    spi_dc_write_data(&driver->bus, 0x48);
+    spi_dc_write_data(&driver->bus, 0x98);
+    spi_dc_write_data(&driver->bus, 0x37);
+    spi_dc_write_data(&driver->bus, 0x0a);
+    spi_dc_write_data(&driver->bus, 0x13);
+    spi_dc_write_data(&driver->bus, 0x04);
+    spi_dc_write_data(&driver->bus, 0x11);
+    spi_dc_write_data(&driver->bus, 0x0d);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, ILI948X_NGAMCTRL);
-    spi_dc_write_data(&spi->bus, 0x0f);
-    spi_dc_write_data(&spi->bus, 0x32);
-    spi_dc_write_data(&spi->bus, 0x2e);
-    spi_dc_write_data(&spi->bus, 0x0b);
-    spi_dc_write_data(&spi->bus, 0x0d);
-    spi_dc_write_data(&spi->bus, 0x05);
-    spi_dc_write_data(&spi->bus, 0x47);
-    spi_dc_write_data(&spi->bus, 0x75);
-    spi_dc_write_data(&spi->bus, 0x37);
-    spi_dc_write_data(&spi->bus, 0x06);
-    spi_dc_write_data(&spi->bus, 0x10);
-    spi_dc_write_data(&spi->bus, 0x03);
-    spi_dc_write_data(&spi->bus, 0x24);
-    spi_dc_write_data(&spi->bus, 0x20);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_NGAMCTRL);
+    spi_dc_write_data(&driver->bus, 0x0f);
+    spi_dc_write_data(&driver->bus, 0x32);
+    spi_dc_write_data(&driver->bus, 0x2e);
+    spi_dc_write_data(&driver->bus, 0x0b);
+    spi_dc_write_data(&driver->bus, 0x0d);
+    spi_dc_write_data(&driver->bus, 0x05);
+    spi_dc_write_data(&driver->bus, 0x47);
+    spi_dc_write_data(&driver->bus, 0x75);
+    spi_dc_write_data(&driver->bus, 0x37);
+    spi_dc_write_data(&driver->bus, 0x06);
+    spi_dc_write_data(&driver->bus, 0x10);
+    spi_dc_write_data(&driver->bus, 0x03);
+    spi_dc_write_data(&driver->bus, 0x24);
+    spi_dc_write_data(&driver->bus, 0x20);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, ILI948X_DGAMCTRL);
-    spi_dc_write_data(&spi->bus, 0x0f);
-    spi_dc_write_data(&spi->bus, 0x32);
-    spi_dc_write_data(&spi->bus, 0x2e);
-    spi_dc_write_data(&spi->bus, 0x0b);
-    spi_dc_write_data(&spi->bus, 0x0d);
-    spi_dc_write_data(&spi->bus, 0x05);
-    spi_dc_write_data(&spi->bus, 0x47);
-    spi_dc_write_data(&spi->bus, 0x75);
-    spi_dc_write_data(&spi->bus, 0x37);
-    spi_dc_write_data(&spi->bus, 0x06);
-    spi_dc_write_data(&spi->bus, 0x10);
-    spi_dc_write_data(&spi->bus, 0x03);
-    spi_dc_write_data(&spi->bus, 0x24);
-    spi_dc_write_data(&spi->bus, 0x20);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_DGAMCTRL);
+    spi_dc_write_data(&driver->bus, 0x0f);
+    spi_dc_write_data(&driver->bus, 0x32);
+    spi_dc_write_data(&driver->bus, 0x2e);
+    spi_dc_write_data(&driver->bus, 0x0b);
+    spi_dc_write_data(&driver->bus, 0x0d);
+    spi_dc_write_data(&driver->bus, 0x05);
+    spi_dc_write_data(&driver->bus, 0x47);
+    spi_dc_write_data(&driver->bus, 0x75);
+    spi_dc_write_data(&driver->bus, 0x37);
+    spi_dc_write_data(&driver->bus, 0x06);
+    spi_dc_write_data(&driver->bus, 0x10);
+    spi_dc_write_data(&driver->bus, 0x03);
+    spi_dc_write_data(&driver->bus, 0x24);
+    spi_dc_write_data(&driver->bus, 0x20);
+    spi_dc_write_data(&driver->bus, 0x00);
 }
 
-static void display_init_9488(struct SPI *spi)
+static void display_init_9488(struct DCSLCDDriver *driver)
 {
     // ILI9488: RGB666 over SPI (3 bytes/pixel).
-    spi_dc_write_command(&spi->bus, ILI948X_IFMODE);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_IFMODE);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, ILI948X_ADJCTRL3);
-    spi_dc_write_data(&spi->bus, 0xA9);
-    spi_dc_write_data(&spi->bus, 0x51);
-    spi_dc_write_data(&spi->bus, 0x2C);
-    spi_dc_write_data(&spi->bus, 0x82);
+    spi_dc_write_command(&driver->bus, ILI948X_ADJCTRL3);
+    spi_dc_write_data(&driver->bus, 0xA9);
+    spi_dc_write_data(&driver->bus, 0x51);
+    spi_dc_write_data(&driver->bus, 0x2C);
+    spi_dc_write_data(&driver->bus, 0x82);
 
-    spi_dc_write_command(&spi->bus, ILI948X_PWRCTR1);
-    spi_dc_write_data(&spi->bus, 0x11);
-    spi_dc_write_data(&spi->bus, 0x09);
+    spi_dc_write_command(&driver->bus, ILI948X_PWRCTR1);
+    spi_dc_write_data(&driver->bus, 0x11);
+    spi_dc_write_data(&driver->bus, 0x09);
 
-    spi_dc_write_command(&spi->bus, ILI948X_PWRCTR2);
-    spi_dc_write_data(&spi->bus, 0x41);
+    spi_dc_write_command(&driver->bus, ILI948X_PWRCTR2);
+    spi_dc_write_data(&driver->bus, 0x41);
 
-    spi_dc_write_command(&spi->bus, ILI948X_VMCTR1);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x0A);
-    spi_dc_write_data(&spi->bus, 0x80);
+    spi_dc_write_command(&driver->bus, ILI948X_VMCTR1);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x0A);
+    spi_dc_write_data(&driver->bus, 0x80);
 
-    spi_dc_write_command(&spi->bus, ILI948X_FRMCTR1);
-    spi_dc_write_data(&spi->bus, 0xB0);
-    spi_dc_write_data(&spi->bus, 0x11);
+    spi_dc_write_command(&driver->bus, ILI948X_FRMCTR1);
+    spi_dc_write_data(&driver->bus, 0xB0);
+    spi_dc_write_data(&driver->bus, 0x11);
 
-    spi_dc_write_command(&spi->bus, ILI948X_INVCTR);
-    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_command(&driver->bus, ILI948X_INVCTR);
+    spi_dc_write_data(&driver->bus, 0x02);
 
-    spi_dc_write_command(&spi->bus, ILI948X_DFUNCTR);
-    spi_dc_write_data(&spi->bus, 0x02);
-    spi_dc_write_data(&spi->bus, 0x02);
+    spi_dc_write_command(&driver->bus, ILI948X_DFUNCTR);
+    spi_dc_write_data(&driver->bus, 0x02);
+    spi_dc_write_data(&driver->bus, 0x02);
 
-    spi_dc_write_command(&spi->bus, ILI948X_ETMOD);
-    spi_dc_write_data(&spi->bus, 0xC6);
+    spi_dc_write_command(&driver->bus, ILI948X_ETMOD);
+    spi_dc_write_data(&driver->bus, 0xC6);
 
-    spi_dc_write_command(&spi->bus, ILI948X_HS_LANES_CTRL);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x04);
+    spi_dc_write_command(&driver->bus, ILI948X_HS_LANES_CTRL);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x04);
 
-    spi_dc_write_command(&spi->bus, ILI948X_IMAGE_FUNCTION);
-    spi_dc_write_data(&spi->bus, 0x00);
+    spi_dc_write_command(&driver->bus, ILI948X_IMAGE_FUNCTION);
+    spi_dc_write_data(&driver->bus, 0x00);
 
-    spi_dc_write_command(&spi->bus, DCS_LCD_COLMOD);
-    spi_dc_write_data(&spi->bus, 0x66);
+    spi_dc_write_command(&driver->bus, DCS_LCD_COLMOD);
+    spi_dc_write_data(&driver->bus, 0x66);
 
-    spi_dc_write_command(&spi->bus, ILI948X_PGAMCTRL);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x07);
-    spi_dc_write_data(&spi->bus, 0x10);
-    spi_dc_write_data(&spi->bus, 0x09);
-    spi_dc_write_data(&spi->bus, 0x17);
-    spi_dc_write_data(&spi->bus, 0x0B);
-    spi_dc_write_data(&spi->bus, 0x41);
-    spi_dc_write_data(&spi->bus, 0x89);
-    spi_dc_write_data(&spi->bus, 0x4B);
-    spi_dc_write_data(&spi->bus, 0x0A);
-    spi_dc_write_data(&spi->bus, 0x0C);
-    spi_dc_write_data(&spi->bus, 0x0E);
-    spi_dc_write_data(&spi->bus, 0x18);
-    spi_dc_write_data(&spi->bus, 0x1B);
-    spi_dc_write_data(&spi->bus, 0x0F);
+    spi_dc_write_command(&driver->bus, ILI948X_PGAMCTRL);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x07);
+    spi_dc_write_data(&driver->bus, 0x10);
+    spi_dc_write_data(&driver->bus, 0x09);
+    spi_dc_write_data(&driver->bus, 0x17);
+    spi_dc_write_data(&driver->bus, 0x0B);
+    spi_dc_write_data(&driver->bus, 0x41);
+    spi_dc_write_data(&driver->bus, 0x89);
+    spi_dc_write_data(&driver->bus, 0x4B);
+    spi_dc_write_data(&driver->bus, 0x0A);
+    spi_dc_write_data(&driver->bus, 0x0C);
+    spi_dc_write_data(&driver->bus, 0x0E);
+    spi_dc_write_data(&driver->bus, 0x18);
+    spi_dc_write_data(&driver->bus, 0x1B);
+    spi_dc_write_data(&driver->bus, 0x0F);
 
-    spi_dc_write_command(&spi->bus, ILI948X_NGAMCTRL);
-    spi_dc_write_data(&spi->bus, 0x00);
-    spi_dc_write_data(&spi->bus, 0x17);
-    spi_dc_write_data(&spi->bus, 0x1A);
-    spi_dc_write_data(&spi->bus, 0x04);
-    spi_dc_write_data(&spi->bus, 0x0E);
-    spi_dc_write_data(&spi->bus, 0x06);
-    spi_dc_write_data(&spi->bus, 0x2F);
-    spi_dc_write_data(&spi->bus, 0x45);
-    spi_dc_write_data(&spi->bus, 0x43);
-    spi_dc_write_data(&spi->bus, 0x02);
-    spi_dc_write_data(&spi->bus, 0x0A);
-    spi_dc_write_data(&spi->bus, 0x09);
-    spi_dc_write_data(&spi->bus, 0x32);
-    spi_dc_write_data(&spi->bus, 0x36);
-    spi_dc_write_data(&spi->bus, 0x0F);
+    spi_dc_write_command(&driver->bus, ILI948X_NGAMCTRL);
+    spi_dc_write_data(&driver->bus, 0x00);
+    spi_dc_write_data(&driver->bus, 0x17);
+    spi_dc_write_data(&driver->bus, 0x1A);
+    spi_dc_write_data(&driver->bus, 0x04);
+    spi_dc_write_data(&driver->bus, 0x0E);
+    spi_dc_write_data(&driver->bus, 0x06);
+    spi_dc_write_data(&driver->bus, 0x2F);
+    spi_dc_write_data(&driver->bus, 0x45);
+    spi_dc_write_data(&driver->bus, 0x43);
+    spi_dc_write_data(&driver->bus, 0x02);
+    spi_dc_write_data(&driver->bus, 0x0A);
+    spi_dc_write_data(&driver->bus, 0x09);
+    spi_dc_write_data(&driver->bus, 0x32);
+    spi_dc_write_data(&driver->bus, 0x36);
+    spi_dc_write_data(&driver->bus, 0x0F);
 }

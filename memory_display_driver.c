@@ -61,7 +61,7 @@
 
 #include "font_data.h"
 
-struct SPI
+struct MemoryLCDDriver
 {
     struct SPIDisplay spi_disp;
     Context *ctx;
@@ -69,8 +69,8 @@ struct SPI
     struct DisplayTaskArgs display_args;
 };
 
-#define SPI_FROM_CTX(ctx) \
-    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
+#define MEMORY_LCD_DRIVER_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct MemoryLCDDriver, display_args)
 
 #include "display_items.h"
 #include "display_message.h"
@@ -121,18 +121,18 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = screen->w;
     int screen_height = screen->h;
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct MemoryLCDDriver *driver = MEMORY_LCD_DRIVER_FROM_CTX(ctx);
 
     int memsize = 2 + 400 / 8 + 2;
     uint8_t *buf = screen->pixels;
 
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(driver->spi_disp.handle, portMAX_DELAY);
     bool transaction_in_progress = false;
 
     for (int ypos = 0; ypos < screen_height; ypos++) {
         if (!screen->dma_out && transaction_in_progress) {
             spi_transaction_t *trans = NULL;
-            spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         memset(buf + 2, 0xFF, DISPLAY_WIDTH / 8);
@@ -151,16 +151,16 @@ static void do_update(Context *ctx, term display_list)
         if (screen->dma_out) {
             if (transaction_in_progress) {
                 spi_transaction_t *trans = NULL;
-                spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+                spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
             }
             void *tmp = screen->pixels;
             screen->pixels = screen->dma_out;
             buf = screen->pixels;
             screen->dma_out = tmp;
 
-            spi_display_dma_write(&spi->spi_disp, memsize, screen->dma_out);
+            spi_display_dma_write(&driver->spi_disp, memsize, screen->dma_out);
         } else {
-            spi_display_dma_write(&spi->spi_disp, memsize, buf);
+            spi_display_dma_write(&driver->spi_disp, memsize, buf);
         }
 
         transaction_in_progress = true;
@@ -168,10 +168,10 @@ static void do_update(Context *ctx, term display_list)
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
+    spi_device_release_bus(driver->spi_disp.handle);
     display_items_delete(items, len);
 }
 
@@ -250,14 +250,14 @@ static void display_init(Context *ctx, term opts)
 
     GlobalContext *glb = ctx->global;
 
-    struct SPI *spi = malloc(sizeof(struct SPI));
+    struct MemoryLCDDriver *driver = malloc(sizeof(struct MemoryLCDDriver));
 
-    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
-    spi->display_args.process_message_fn = process_message;
-    spi->display_args.ctx = ctx;
-    ctx->platform_data = &spi->display_args;
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    ctx->platform_data = &driver->display_args;
 
-    spi->ctx = ctx;
+    driver->ctx = ctx;
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
@@ -268,7 +268,7 @@ static void display_init(Context *ctx, term opts)
     spi_config.cs_ena_pretrans = 4; // it should be at least 3us
     spi_config.cs_ena_posttrans = 2; // it should be at least 1us
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->spi_disp, &spi_config);
+    spi_display_init(&driver->spi_disp, &spi_config);
 
     int en_gpio;
     bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "en"), &en_gpio, glb);
@@ -278,5 +278,5 @@ static void display_init(Context *ctx, term opts)
         gpio_set_level(en_gpio, 1);
     }
 
-    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
 }

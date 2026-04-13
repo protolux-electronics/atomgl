@@ -77,7 +77,7 @@ static const char *TAG = "gdep073e01";
 
 static void clear_screen(Context *ctx, int color);
 
-struct SPI
+struct EpaperDriver
 {
     struct SPIDCBus bus;
 
@@ -92,33 +92,33 @@ struct SPI
     struct DisplayTaskArgs display_args;
 };
 
-#define SPI_FROM_CTX(ctx) \
-    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct SPI, display_args)
+#define EPAPER_DRIVER_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct EpaperDriver, display_args)
 
 static struct EpaperScreen *screen;
 
-static void display_reset(struct SPI *spi)
+static void display_reset(struct EpaperDriver *driver)
 {
-    gpio_set_level(spi->reset_gpio, 0);
+    gpio_set_level(driver->reset_gpio, 0);
     vTaskDelay(100);
-    gpio_set_level(spi->reset_gpio, 1);
+    gpio_set_level(driver->reset_gpio, 1);
 }
 
-static void wait_busy_level(struct SPI *spi, int level)
+static void wait_busy_level(struct EpaperDriver *driver, int level)
 {
-    while (gpio_get_level(spi->busy_gpio) != level) {
+    while (gpio_get_level(driver->busy_gpio) != level) {
         vTaskDelay(100);
     }
 }
 
 static void wait_some_time(Context *ctx)
 {
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
     uint64_t now = tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL);
-    uint64_t delta = now - spi->last_refresh;
+    uint64_t delta = now - driver->last_refresh;
     if (delta < 2000) {
         // Wait 2 seconds before allowing a new refresh
         // this is not on datasheets, but without this the screen will not update.
@@ -128,24 +128,24 @@ static void wait_some_time(Context *ctx)
 
 static void update_last_refresh_ts(Context *ctx)
 {
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    spi->last_refresh = tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL);
+    driver->last_refresh = tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL);
 }
 
 static void maybe_refresh(Context *ctx)
 {
 #if 0
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
 
-    spi->count_to_refresh--;
-    if (spi->count_to_refresh <= 0) {
+    driver->count_to_refresh--;
+    if (driver->count_to_refresh <= 0) {
         // 7 is the special "clear screen color"
         clear_screen(ctx, 7);
         update_last_refresh_ts(ctx);
-        spi->count_to_refresh = 5;
+        driver->count_to_refresh = 5;
     }
 #endif
 }
@@ -170,31 +170,31 @@ static void do_update(Context *ctx, term display_list)
 
     int screen_width = DISPLAY_WIDTH;
     int screen_height = DISPLAY_HEIGHT;
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
 
 #if 0
     // resolution command
-    spi_dc_write_command(&spi->bus, 0x61);
-    spi_dc_write_data(&spi->bus, 0x02);
-    spi_dc_write_data(&spi->bus, 0x58);
-    spi_dc_write_data(&spi->bus, 0x01);
-    spi_dc_write_data(&spi->bus, 0xC0);
+    spi_dc_write_command(&driver->bus, 0x61);
+    spi_dc_write_data(&driver->bus, 0x02);
+    spi_dc_write_data(&driver->bus, 0x58);
+    spi_dc_write_data(&driver->bus, 0x01);
+    spi_dc_write_data(&driver->bus, 0xC0);
 #endif
 
     // update command
-    spi_dc_write_command(&spi->bus, 0x10);
+    spi_dc_write_command(&driver->bus, 0x10);
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
     memset(buf, 0x11, DISPLAY_WIDTH / 2);
 
     bool transaction_in_progress = false;
 
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
     for (int ypos = 0; ypos < screen_height; ypos++) {
         if (transaction_in_progress) {
             spi_transaction_t *trans = NULL;
-            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         int xpos = 0;
@@ -203,34 +203,34 @@ static void do_update(Context *ctx, term display_list)
             xpos += drawn_pixels;
         }
 
-        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&driver->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
     if (transaction_in_progress) {
         spi_transaction_t *trans = NULL;
-        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->bus.spi_disp.handle);
+    spi_device_release_bus(driver->bus.spi_disp.handle);
 
     free(buf);
 
     // not sure if we should add 0x11, which is end of data command or not
 
     // power on command
-    spi_dc_write_command(&spi->bus, 0x04);
-    wait_busy_level(spi, 1);
+    spi_dc_write_command(&driver->bus, 0x04);
+    wait_busy_level(driver, 1);
 
     // refresh command
-    spi_dc_write_command(&spi->bus, 0x12);
+    spi_dc_write_command(&driver->bus, 0x12);
     uint8_t refresh_data[] = {0x00};
-    spi_dc_write_data_n(&spi->bus, refresh_data, sizeof(refresh_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, refresh_data, sizeof(refresh_data));
+    wait_busy_level(driver, 1);
 
     // power off command
-    spi_dc_write_command(&spi->bus, 0x02);
-    wait_busy_level(spi, 1);
+    spi_dc_write_command(&driver->bus, 0x02);
+    wait_busy_level(driver, 1);
 
     display_items_delete(items, len);
 
@@ -280,157 +280,157 @@ static void process_message(Message *message, Context *ctx)
 
 static void clear_screen(Context *ctx, int color)
 {
-    struct SPI *spi = SPI_FROM_CTX(ctx);
+    struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
 
     uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
 
 #if 0
-    spi_dc_write_command(&spi->bus, 0x61);
-    spi_dc_write_data(&spi->bus, 0x02);
-    spi_dc_write_data(&spi->bus, 0x58);
-    spi_dc_write_data(&spi->bus, 0x01);
-    spi_dc_write_data(&spi->bus, 0xC0);
+    spi_dc_write_command(&driver->bus, 0x61);
+    spi_dc_write_data(&driver->bus, 0x02);
+    spi_dc_write_data(&driver->bus, 0x58);
+    spi_dc_write_data(&driver->bus, 0x01);
+    spi_dc_write_data(&driver->bus, 0xC0);
 #endif
-    spi_dc_write_command(&spi->bus, 0x10);
+    spi_dc_write_command(&driver->bus, 0x10);
 
     bool transaction_in_progress = false;
 
-    spi_device_acquire_bus(spi->bus.spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
     for (int i = 0; i < DISPLAY_HEIGHT; i++) {
         if (transaction_in_progress) {
             spi_transaction_t *trans = NULL;
-            spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         // let's ensure a memset otherwise we might generate odd artifacts
         memset(buf, color | (color << 4), DISPLAY_WIDTH / 2);
-        spi_display_dma_write(&spi->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&driver->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
         transaction_in_progress = true;
     }
 
     if (transaction_in_progress) {
         spi_transaction_t *trans = NULL;
-        spi_device_get_trans_result(spi->bus.spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->bus.spi_disp.handle);
+    spi_device_release_bus(driver->bus.spi_disp.handle);
 
     free(buf);
 
-    spi_dc_write_command(&spi->bus, 0x04);
-    wait_busy_level(spi, 1);
-    spi_dc_write_command(&spi->bus, 0x12);
+    spi_dc_write_command(&driver->bus, 0x04);
+    wait_busy_level(driver, 1);
+    spi_dc_write_command(&driver->bus, 0x12);
     uint8_t refresh_data[] = {0x00};
-    spi_dc_write_data_n(&spi->bus, refresh_data, sizeof(refresh_data));
-    wait_busy_level(spi, 1);
-    spi_dc_write_command(&spi->bus, 0x02);
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, refresh_data, sizeof(refresh_data));
+    wait_busy_level(driver, 1);
+    spi_dc_write_command(&driver->bus, 0x02);
+    wait_busy_level(driver, 1);
 }
 
 static void display_spi_init(Context *ctx, term opts)
 {
-    struct SPI *spi = malloc(sizeof(struct SPI));
+    struct EpaperDriver *driver = malloc(sizeof(struct EpaperDriver));
     // TODO check here
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
     spi_config.clock_speed_hz = 4000000;
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->bus.spi_disp, &spi_config);
+    spi_display_init(&driver->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x4", "busy"), &spi->busy_gpio, ctx->global);
-    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &spi->bus.dc_gpio, ctx->global);
-    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &spi->reset_gpio, ctx->global);
+    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x4", "busy"), &driver->busy_gpio, ctx->global);
+    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &driver->bus.dc_gpio, ctx->global);
+    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &driver->reset_gpio, ctx->global);
     if (UNLIKELY(!ok)) {
         ESP_LOGE(TAG, "Failed init: invalid display GPIOs.");
         return;
     }
 
-    gpio_set_direction(spi->reset_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_level(spi->reset_gpio, 1);
-    gpio_set_direction(spi->bus.dc_gpio, GPIO_MODE_OUTPUT);
-    gpio_set_pull_mode(spi->bus.dc_gpio, GPIO_PULLUP_ENABLE);
-    gpio_set_direction(spi->busy_gpio, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(spi->busy_gpio, GPIO_PULLUP_ENABLE);
-    gpio_set_level(spi->bus.dc_gpio, 0);
+    gpio_set_direction(driver->reset_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(driver->reset_gpio, 1);
+    gpio_set_direction(driver->bus.dc_gpio, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(driver->bus.dc_gpio, GPIO_PULLUP_ENABLE);
+    gpio_set_direction(driver->busy_gpio, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(driver->busy_gpio, GPIO_PULLUP_ENABLE);
+    gpio_set_level(driver->bus.dc_gpio, 0);
 
-    display_reset(spi);
+    display_reset(driver);
 
-    wait_busy_level(spi, 1);
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, 0xAA);
+    spi_dc_write_command(&driver->bus, 0xAA);
     uint8_t psr1_data[] = {0x49, 0x55, 0x20, 0x08, 0x09, 0x18};
-    spi_dc_write_data_n(&spi->bus, psr1_data, sizeof(psr1_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, psr1_data, sizeof(psr1_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, PWRR);
+    spi_dc_write_command(&driver->bus, PWRR);
     uint8_t pwrr_data[] = {0x3F};
-    spi_dc_write_data_n(&spi->bus, pwrr_data, sizeof(pwrr_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, pwrr_data, sizeof(pwrr_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, PSR);
+    spi_dc_write_command(&driver->bus, PSR);
     uint8_t psr_data[] = {0x5F, 0x69};
-    spi_dc_write_data_n(&spi->bus, psr_data, sizeof(psr_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, psr_data, sizeof(psr_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, POFS);
+    spi_dc_write_command(&driver->bus, POFS);
     uint8_t pofs_data[] = {0x00, 0x54, 0x00, 0x44};
-    spi_dc_write_data_n(&spi->bus, pofs_data, sizeof(pofs_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, pofs_data, sizeof(pofs_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, BTST1);
+    spi_dc_write_command(&driver->bus, BTST1);
     uint8_t btst1_data[] = {0x40, 0x1F, 0x1F, 0x2C};
-    spi_dc_write_data_n(&spi->bus, btst1_data, sizeof(btst1_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, btst1_data, sizeof(btst1_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, BTST2);
+    spi_dc_write_command(&driver->bus, BTST2);
     uint8_t btst2_data[] = {0x6F, 0x1F, 0x17, 0x49};
-    spi_dc_write_data_n(&spi->bus, btst2_data, sizeof(btst2_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, btst2_data, sizeof(btst2_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, BTST3);
+    spi_dc_write_command(&driver->bus, BTST3);
     uint8_t btst3_data[] = {0x6F, 0x1F, 0x1F, 0x22};
-    spi_dc_write_data_n(&spi->bus, btst3_data, sizeof(btst3_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, btst3_data, sizeof(btst3_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, PLL);
+    spi_dc_write_command(&driver->bus, PLL);
     uint8_t pll_data[] = {0x00};
-    spi_dc_write_data_n(&spi->bus, pll_data, sizeof(pll_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, pll_data, sizeof(pll_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, CDI);
+    spi_dc_write_command(&driver->bus, CDI);
     uint8_t cdi_data[] = {0x3F};
-    spi_dc_write_data_n(&spi->bus, cdi_data, sizeof(cdi_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, cdi_data, sizeof(cdi_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, TCON);
+    spi_dc_write_command(&driver->bus, TCON);
     uint8_t tcon_data[] = {0x02, 0x00};
-    spi_dc_write_data_n(&spi->bus, tcon_data, sizeof(tcon_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, tcon_data, sizeof(tcon_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, TRES);
+    spi_dc_write_command(&driver->bus, TRES);
     uint8_t tres_data[] = {0x03, 0x20, 0x01, 0xe0};
-    spi_dc_write_data_n(&spi->bus, tres_data, sizeof(tres_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, tres_data, sizeof(tres_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, T_VDCS);
+    spi_dc_write_command(&driver->bus, T_VDCS);
     uint8_t vdcs_data[] = {0x01};
-    spi_dc_write_data_n(&spi->bus, vdcs_data, sizeof(vdcs_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, vdcs_data, sizeof(vdcs_data));
+    wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&spi->bus, PWS);
+    spi_dc_write_command(&driver->bus, PWS);
     uint8_t pws_data[] = {0x2F};
-    spi_dc_write_data_n(&spi->bus, pws_data, sizeof(pws_data));
-    wait_busy_level(spi, 1);
+    spi_dc_write_data_n(&driver->bus, pws_data, sizeof(pws_data));
+    wait_busy_level(driver, 1);
 
     // PON
-    spi_dc_write_command(&spi->bus, 0x04);
-    wait_busy_level(spi, 1);
+    spi_dc_write_command(&driver->bus, 0x04);
+    wait_busy_level(driver, 1);
 
-    ctx->platform_data = &spi->display_args;
+    ctx->platform_data = &driver->display_args;
 
-    spi->ctx = ctx;
+    driver->ctx = ctx;
 
     screen = calloc(1, sizeof(struct EpaperScreen));
     screen->w = DISPLAY_WIDTH;
@@ -439,7 +439,7 @@ static void display_spi_init(Context *ctx, term opts)
     screen->palette_size = 7;
 
     update_last_refresh_ts(ctx);
-    spi->count_to_refresh = 0;
+    driver->count_to_refresh = 0;
 
 #if SELF_TEST
     for (int i = 0; i < 8; i++) {
@@ -452,10 +452,10 @@ static void display_spi_init(Context *ctx, term opts)
     while (1)
         ;
 #else
-    spi->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
-    spi->display_args.process_message_fn = process_message;
-    spi->display_args.ctx = ctx;
-    xTaskCreate(display_task_process_messages, "display", 10000, &spi->display_args, 1, NULL);
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
 #endif
 }
 
