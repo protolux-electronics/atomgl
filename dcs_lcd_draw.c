@@ -29,8 +29,6 @@
 #include "dcs_lcd_color.h"
 #include "font_data.h"
 
-#define CHAR_WIDTH 8
-
 int dcs_lcd_find_max_line_len(const struct DCSLCDScreen *screen,
     BaseDisplayItem items[], size_t items_len, int xpos, int ypos)
 {

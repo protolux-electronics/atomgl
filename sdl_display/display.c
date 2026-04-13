@@ -38,7 +38,6 @@
 #define BPP 4
 #define DEPTH 32
 
-#define CHAR_WIDTH 8
 #include "../display_items.h"
 #include "../display_message.h"
 #include "../font_data.h"

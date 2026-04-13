@@ -31,8 +31,6 @@
 #include "epaper_screen.h"
 #include "font_data.h"
 
-#define CHAR_WIDTH 8
-
 void epaper_draw_pixel_x(const struct EpaperScreen *screen,
     uint8_t *line_buf, int xpos, uint8_t c)
 {

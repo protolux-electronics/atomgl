@@ -29,8 +29,6 @@
 #include "display_items.h"
 #include "font_data.h"
 
-#define CHAR_WIDTH 8
-
 static int get_color(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
     // dither

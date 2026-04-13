@@ -10,6 +10,7 @@
 #define _FONT_DATA_H_
 
 #define FONTDATAMAX 4096
+#define CHAR_WIDTH 8
 
 extern const unsigned char fontdata[FONTDATAMAX];
 
