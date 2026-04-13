@@ -197,6 +197,12 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
             surface.width = rect.width;
             surface.height = rect.height;
             surface.buffer = malloc(rect.width * rect.height * BPP);
+            if (!surface.buffer) {
+                fprintf(stderr, "Failed to allocate ufont surface (%ix%i)\n",
+                    rect.width, rect.height);
+                free(text);
+                return;
+            }
             memset(surface.buffer, 0, rect.width * rect.height * BPP);
             // Convert Erlang fgcolor (0xRRGGBBAA) to RGBA8888 little-
             // endian byte order (R in low byte, alpha byte cleared) so
