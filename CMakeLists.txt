@@ -36,6 +36,7 @@ idf_component_register(SRCS
     "display_message.c"
     "display_task.c"
     "epaper_color.c"
+    "epaper_commands.c"
     "epaper_draw.c"
     "mono_draw.c"
     "5in65_acep_7c_display_driver.c"
