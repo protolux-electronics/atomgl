@@ -25,6 +25,8 @@
 
 #include <driver/gpio.h>
 
+#include "epaper_color.h"
+
 static void wait_busy_high(int busy_gpio)
 {
     while (gpio_get_level(busy_gpio) != 1) {
@@ -108,5 +110,65 @@ const uint8_t epaper_init_seq_gdep073e01[] = {
 _Static_assert(sizeof(epaper_init_seq_gdep073e01) == 63,
     "epaper_init_seq_gdep073e01: miscounted bytes");
 const size_t epaper_init_seq_gdep073e01_len = sizeof(epaper_init_seq_gdep073e01);
+
+// --- Per-frame preambles ---
+//
+// ACeP 5.65" retransmits the resolution command (0x61 + 600x448)
+// before every DTM; GoodDisplay's GDEP073E01 does not.  The preamble
+// uses the same byte-array format as init_seq.
+
+static const uint8_t epaper_preamble_acep7c[] = {
+    0x61, 4,  0x02, 0x58, 0x01, 0xC0,                                  // TRES (600x448)
+};
+_Static_assert(sizeof(epaper_preamble_acep7c) == 6,
+    "epaper_preamble_acep7c: miscounted bytes");
+
+// --- Per-panel descriptors ---
+
+const struct EPaperDesc epaper_desc_acep7c = {
+    .name                        = "Waveshare 5.65\" ACeP 7-color",
+    .native_width                = 600,
+    .native_height               = 448,
+    .spi_clock_hz                = 1000000,
+
+    .palette                     = epaper_acep_palette,
+    .palette_size                = 7,
+
+    .init_seq                    = epaper_init_seq_acep7c,
+    .init_seq_len                = sizeof(epaper_init_seq_acep7c),
+    .init_wait_busy_between_cmds = false,
+
+    .frame_preamble_seq          = epaper_preamble_acep7c,
+    .frame_preamble_seq_len      = sizeof(epaper_preamble_acep7c),
+
+    .refresh_has_data            = false,
+    .refresh_data_byte           = 0x00,
+    .post_power_off_busy_level   = 0,
+
+    .periodic_refresh_interval   = 5,
+};
+
+const struct EPaperDesc epaper_desc_gdep073e01 = {
+    .name                        = "Good Display GDEP073E01 7.3\" 7-color",
+    .native_width                = 800,
+    .native_height               = 480,
+    .spi_clock_hz                = 4000000,
+
+    .palette                     = epaper_gdep073e01_palette,
+    .palette_size                = 7,
+
+    .init_seq                    = epaper_init_seq_gdep073e01,
+    .init_seq_len                = sizeof(epaper_init_seq_gdep073e01),
+    .init_wait_busy_between_cmds = true,
+
+    .frame_preamble_seq          = NULL,
+    .frame_preamble_seq_len      = 0,
+
+    .refresh_has_data            = true,
+    .refresh_data_byte           = 0x00,
+    .post_power_off_busy_level   = 1,
+
+    .periodic_refresh_interval   = 0,
+};
 
 // clang-format on
