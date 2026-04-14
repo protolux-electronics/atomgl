@@ -54,7 +54,7 @@
 #define REPORT_UNEXPECTED_MSGS 0
 #define SELF_TEST 0
 
-static const char *TAG = "gdep073e01";
+static const char *TAG = "epaper_display_driver";
 
 static void clear_screen(Context *ctx, int color);
 
@@ -373,7 +373,7 @@ static void display_spi_init(Context *ctx, term opts)
 #endif
 }
 
-Context *gdep073e01_display_driver_create_port(GlobalContext *global, term opts)
+Context *epaper_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
     ctx->native_handler = display_task_consume_mailbox;

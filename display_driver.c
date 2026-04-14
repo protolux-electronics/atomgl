@@ -30,7 +30,7 @@
 static const char *TAG = "display_driver";
 
 Context *acep_5in65_7c_display_driver_create_port(GlobalContext *global, term opts);
-Context *gdep073e01_display_driver_create_port(GlobalContext *global, term opts);
+Context *epaper_display_create_port(GlobalContext *global, term opts);
 Context *dcs_lcd_display_create_port(GlobalContext *global, term opts);
 Context *memory_lcd_display_create_port(GlobalContext *global, term opts);
 Context *ssd1306_display_create_port(GlobalContext *global, term opts);
@@ -55,7 +55,7 @@ Context *display_create_port(GlobalContext *global, term opts)
     if (!strcmp(compat_string, "waveshare,5in65-acep-7c")) {
         ctx = acep_5in65_7c_display_driver_create_port(global, opts);
     } else if (!strcmp(compat_string, "good-display/gdep073e01")) {
-        ctx = gdep073e01_display_driver_create_port(global, opts);
+        ctx = epaper_display_create_port(global, opts);
     } else if (!strcmp(compat_string, "sharp,memory-lcd")) {
         ctx = memory_lcd_display_create_port(global, opts);
     } else if (!strcmp(compat_string, "ilitek,ili9341")

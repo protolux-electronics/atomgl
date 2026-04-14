@@ -40,7 +40,7 @@ idf_component_register(SRCS
     "epaper_draw.c"
     "mono_draw.c"
     "5in65_acep_7c_display_driver.c"
-    "gdep073e01_display_driver.c"
+    "epaper_display_driver.c"
     "font_data.c"
     "memory_display_driver.c"
     "ssd1306_display_driver.c"
