@@ -61,8 +61,6 @@
 #include "spi_dc_driver.h"
 #include "spi_display.h"
 
-// if needed it can be lowered to 27000000, while maximum is 62.5 Mhz
-#define SPI_CLOCK_HZ 40000000
 #define SPI_MODE 0
 
 #include "font_data.h"
@@ -80,6 +78,9 @@ struct DCSLCDDriver
     int reset_gpio;
 
     avm_int_t rotation;
+    bool madctl_bgr;
+
+    const struct DCSLCDDesc *desc;
 
     struct DCSLCDScreen screen;
 
@@ -87,6 +88,48 @@ struct DCSLCDDriver
 
     struct DisplayTaskArgs display_args;
 };
+
+static const struct {
+    const char *compat;
+    const struct DCSLCDDesc *desc;
+} dcs_lcd_compat_table[] = {
+    { "ilitek,ili9341",   &dcs_lcd_desc_ili9341 },
+    { "ilitek,ili9342c",  &dcs_lcd_desc_ili9342c },
+    { "ilitek,ili9486",   &dcs_lcd_desc_ili9486 },
+    { "ilitek,ili9488",   &dcs_lcd_desc_ili9488 },
+    { "sitronix,st7789",  &dcs_lcd_desc_st7789 },
+    { "sitronix,st7796",  &dcs_lcd_desc_st7796 },
+};
+
+static const struct DCSLCDDesc *dcs_lcd_desc_for_compatible(const char *compat)
+{
+    for (size_t i = 0; i < sizeof(dcs_lcd_compat_table) / sizeof(dcs_lcd_compat_table[0]); i++) {
+        if (!strcmp(compat, dcs_lcd_compat_table[i].compat)) {
+            return dcs_lcd_compat_table[i].desc;
+        }
+    }
+    return NULL;
+}
+
+// ILI9488 scanline conversion: RGB565 -> RGB888 bytes.
+static inline void rgb565_swapped_line_to_rgb888(uint8_t *dst, const uint16_t *src_swapped, int n_pixels)
+{
+    for (int i = 0; i < n_pixels; i++) {
+        uint16_t px = (uint16_t) SPI_SWAP_DATA_TX(src_swapped[i], 16);
+
+        uint8_t r5 = (px >> 11) & 0x1F;
+        uint8_t g6 = (px >> 5) & 0x3F;
+        uint8_t b5 = (px >> 0) & 0x1F;
+
+        uint8_t r8 = (r5 << 3) | (r5 >> 2);
+        uint8_t g8 = (g6 << 2) | (g6 >> 4);
+        uint8_t b8 = (b5 << 3) | (b5 >> 2);
+
+        dst[i * 3 + 0] = r8;
+        dst[i * 3 + 1] = g8;
+        dst[i * 3 + 2] = b8;
+    }
+}
 
 #define DCS_LCD_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct DCSLCDDriver, display_args)
@@ -131,11 +174,22 @@ static void do_update(Context *ctx, term display_list)
             spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
-        // NEW CODE
+        // Swap scanline buffers.
         void *tmp = driver->screen.pixels;
         driver->screen.pixels = driver->screen.pixels_out;
         driver->screen.pixels_out = tmp;
-        spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), driver->screen.pixels_out);
+
+        if (driver->desc->pixel_bytes == 2) {
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), driver->screen.pixels_out);
+        } else {
+            void *tmpb = driver->screen.bytes;
+            driver->screen.bytes = driver->screen.bytes_out;
+            driver->screen.bytes_out = tmpb;
+
+            rgb565_swapped_line_to_rgb888(driver->screen.bytes_out, driver->screen.pixels_out, screen_width);
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * 3, driver->screen.bytes_out);
+        }
+
         transaction_in_progress = true;
     }
 
@@ -181,7 +235,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        dcs_lcd_draw_buffer(&driver->bus, &driver->screen, 2, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&driver->bus, &driver->screen, driver->desc->pixel_bytes, x, y, width, height, data);
 
         // draw_buffer is a kind of cast, no need to reply
         return;
@@ -207,10 +261,12 @@ static void process_message(Message *message, Context *ctx)
 
 static void set_rotation(struct DCSLCDDriver *driver, int rotation)
 {
-    if (rotation == 1) {
-        spi_dc_write_command(&driver->bus, DCS_LCD_MADCTL);
-        spi_dc_write_data(&driver->bus, DCS_LCD_MAD_MX | DCS_LCD_MAD_MV);
+    uint8_t madctl = driver->desc->madctl[rotation & 3];
+    if (driver->madctl_bgr) {
+        madctl |= DCS_LCD_MAD_BGR;
     }
+    spi_dc_write_command(&driver->bus, DCS_LCD_MADCTL);
+    spi_dc_write_data(&driver->bus, madctl);
 }
 
 Context *dcs_lcd_display_create_port(GlobalContext *global, term opts)
@@ -223,16 +279,48 @@ Context *dcs_lcd_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
+    // Resolve compatible string -> per-controller descriptor.
+    term compat_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
+    int str_ok;
+    char *compat_string = interop_term_to_string(compat_term, &str_ok);
+    const struct DCSLCDDesc *desc = NULL;
+    if (str_ok && compat_string) {
+        desc = dcs_lcd_desc_for_compatible(compat_string);
+    }
+    if (!desc) {
+        ESP_LOGE(TAG, "Failed init: unknown or missing compatible '%s'.",
+            compat_string ? compat_string : "(null)");
+        free(compat_string);
+        return;
+    }
+    free(compat_string);
+
+    term rotation_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\x8", "rotation"), term_from_int(0), ctx->global);
+    bool ok = term_is_integer(rotation_term);
+    avm_int_t rotation = ok ? term_to_int(rotation_term) : 0;
+
+    // Default geometry from descriptor, swapped on odd rotation, overrideable.
+    int default_w = (rotation & 1) ? desc->native_height : desc->native_width;
+    int default_h = (rotation & 1) ? desc->native_width : desc->native_height;
     term width_term = interop_kv_get_value_default(
-        opts, ATOM_STR("\x5", "width"), term_from_int(320), ctx->global);
+        opts, ATOM_STR("\x5", "width"), term_from_int(default_w), ctx->global);
     term height_term = interop_kv_get_value_default(
-        opts, ATOM_STR("\x6", "height"), term_from_int(240), ctx->global);
+        opts, ATOM_STR("\x6", "height"), term_from_int(default_h), ctx->global);
 
     struct DCSLCDDriver *driver = calloc(1, sizeof(struct DCSLCDDriver));
+    driver->desc = desc;
+    driver->rotation = rotation;
+    driver->madctl_bgr = desc->default_bgr;
     driver->screen.w = term_to_int(width_term);
     driver->screen.h = term_to_int(height_term);
     driver->screen.pixels = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
     driver->screen.pixels_out = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (desc->pixel_bytes == 3) {
+        driver->screen.bytes = heap_caps_malloc(driver->screen.w * 3, MALLOC_CAP_DMA);
+        driver->screen.bytes_out = heap_caps_malloc(driver->screen.w * 3, MALLOC_CAP_DMA);
+    }
 
     driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
     driver->display_args.process_message_fn = process_message;
@@ -244,11 +332,11 @@ static void display_init(Context *ctx, term opts)
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
     spi_config.mode = SPI_MODE;
-    spi_config.clock_speed_hz = SPI_CLOCK_HZ;
+    spi_config.clock_speed_hz = desc->spi_clock_hz;
     spi_display_parse_config(&spi_config, opts, ctx->global);
     spi_display_init(&driver->bus.spi_disp, &spi_config);
 
-    bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &driver->bus.dc_gpio, ctx->global);
+    ok = ok && display_common_gpio_from_opts(opts, ATOM_STR("\x2", "dc"), &driver->bus.dc_gpio, ctx->global);
 
     bool reset_configured = true;
     if (!display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &driver->reset_gpio, ctx->global)) {
@@ -256,13 +344,21 @@ static void display_init(Context *ctx, term opts)
         reset_configured = false;
     }
 
-    term rotation = interop_kv_get_value_default(opts, ATOM_STR("\x8", "rotation"), term_from_int(0), ctx->global);
-    ok = ok && term_is_integer(rotation);
-    driver->rotation = term_to_int(rotation);
-
     term invon = interop_kv_get_value_default(opts, ATOM_STR("\x10", "enable_tft_invon"), FALSE_ATOM, ctx->global);
     ok = ok && ((invon == TRUE_ATOM) || (invon == FALSE_ATOM));
     bool enable_tft_invon = (invon == TRUE_ATOM);
+
+    // color_order: rgb|bgr (default: per-descriptor)
+    term color_order_term = interop_kv_get_value_default(opts, ATOM_STR("\xB", "color_order"), term_nil(), ctx->global);
+    if (color_order_term != term_nil()) {
+        if (color_order_term == context_make_atom(ctx, "\x3" "rgb")) {
+            driver->madctl_bgr = false;
+        } else if (color_order_term == context_make_atom(ctx, "\x3" "bgr")) {
+            driver->madctl_bgr = true;
+        } else {
+            ok = false;
+        }
+    }
 
     term x_off_term = interop_kv_get_value_default(
         opts, ATOM_STR("\x8", "x_offset"), term_from_int(0), ctx->global);
@@ -281,6 +377,12 @@ static void display_init(Context *ctx, term opts)
         return;
     }
 
+    if (desc->madctl[driver->rotation & 3] == 0xFF) {
+        ESP_LOGE(TAG, "Failed init: rotation %d not supported by controller %s.",
+            (int) driver->rotation, desc->name);
+        return;
+    }
+
     // Reset
     if (reset_configured) {
         spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
@@ -295,27 +397,31 @@ static void display_init(Context *ctx, term opts)
 
     gpio_set_direction(driver->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
+    // Init sequence: init_list opt overrides everything; otherwise descriptor
+    // default, with init_seq_type "alt_gamma_2" selecting the ST7789 alt seq.
     term maybe_init_list
         = interop_kv_get_value_default(opts, ATOM_STR("\x9", "init_list"), term_nil(), ctx->global);
     if (maybe_init_list != term_nil()) {
         display_init_using_list(driver, maybe_init_list);
     } else {
-        term init_seq_type_term = interop_kv_get_value_default(opts, ATOM_STR("\xD", "init_seq_type"), term_nil(), ctx->global);
-        int str_ok;
-        char *init_seq_type_string = interop_term_to_string(init_seq_type_term, &str_ok);
-        if (str_ok && !strcmp(init_seq_type_string, "alt_gamma_2")) {
-            dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_st7789_alt);
-            free(init_seq_type_string);
-        } else {
-            dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_st7789_std);
+        const uint8_t *init_seq = desc->default_init_seq;
+        term init_seq_type_term = interop_kv_get_value_default(
+            opts, ATOM_STR("\xD", "init_seq_type"), term_nil(), ctx->global);
+        if (init_seq_type_term != term_nil()) {
+            int type_ok;
+            char *type_str = interop_term_to_string(init_seq_type_term, &type_ok);
+            if (type_ok && !strcmp(type_str, "alt_gamma_2")
+                && (desc == &dcs_lcd_desc_st7789 || desc == &dcs_lcd_desc_st7796)) {
+                init_seq = dcs_lcd_init_seq_st7789_alt;
+            }
+            free(type_str);
         }
-
-        set_rotation(driver, driver->rotation);
-
-        if (enable_tft_invon) {
-            spi_dc_write_command(&driver->bus, DCS_LCD_INVON);
-        }
+        dcs_lcd_execute_init_seq(&driver->bus, init_seq);
     }
+
+    set_rotation(driver, driver->rotation);
+
+    spi_dc_write_command(&driver->bus, enable_tft_invon ? DCS_LCD_INVON : DCS_LCD_INVOFF);
 
     struct BacklightGPIOConfig backlight_config;
     backlight_gpio_init_config(&backlight_config);
