@@ -143,8 +143,12 @@ void dcs_lcd_execute_init_seq(struct SPIDCBus *bus, const uint8_t *seq)
 // clang-format off
 
 // ILI9341 — from display_init_9341() in ili934x_display_driver.c
-// 19 command groups, no delays.
+// 21 command groups, 3 delays (SWRESET 5ms, SLPOUT 120ms, DISPON 120ms).
+// SLPOUT intentionally follows the vendor power/voltage commands: the
+// internal booster must wake up with the configured VMCTR/PWCTR values,
+// otherwise many ILI9341 modules never produce usable output.
 const uint8_t dcs_lcd_init_seq_ili9341[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0xEF,  3,  0x03, 0x80, 0x02,                                                       // (3)
     0xCF,  3,  0x00, 0xC1, 0x30,                                                       // Power ctrl B (3)
     0xED,  4,  0x64, 0x03, 0x12, 0x81,                                                 // Power on seq (4)
@@ -166,14 +170,18 @@ const uint8_t dcs_lcd_init_seq_ili9341[] = {
                0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00,
     0xE1, 15,  0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1,                        // GMCTRN1 (15)
                0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F,
+    0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_ili9341) == 104,
+_Static_assert(sizeof(dcs_lcd_init_seq_ili9341) == 113,
     "ili9341 init sequence size mismatch");
 
 // ILI9342C — from display_init_9342c() in ili934x_display_driver.c
-// 10 command groups, no delays.
+// 12 command groups, 3 delays (SWRESET 5ms, SLPOUT 120ms, DISPON 120ms).
+// SLPOUT follows the vendor power commands; see ILI9341 seq for details.
 const uint8_t dcs_lcd_init_seq_ili9342c[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0xC8,  3,  0xFF, 0x93, 0x42,                                                       // Vendor enable (3)
     0xC0,  2,  0x12, 0x12,                                                              // PWCTR1 (2)
     0xC1,  1,  0x03,                                                                    // PWCTR2 (1)
@@ -186,14 +194,18 @@ const uint8_t dcs_lcd_init_seq_ili9342c[] = {
                0x4C, 0x06, 0x0C, 0x0A, 0x2E, 0x34, 0x0F,
     0xE1, 15,  0x00, 0x0B, 0x11, 0x05, 0x13, 0x09, 0x33, 0x67,                        // GMCTRN1 (15)
                0x48, 0x07, 0x0E, 0x0B, 0x2E, 0x33, 0x0F,
+    0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_ili9342c) == 66,
+_Static_assert(sizeof(dcs_lcd_init_seq_ili9342c) == 75,
     "ili9342c init sequence size mismatch");
 
 // ILI9486 — from display_init_9486() in ili948x_display_driver.c
-// 7 command groups, no delays.
+// 9 command groups, 3 delays (SWRESET 5ms, SLPOUT 120ms, DISPON 120ms).
+// SLPOUT follows the vendor power commands; see ILI9341 seq for details.
 const uint8_t dcs_lcd_init_seq_ili9486[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0xB0,  1,  0x00,                                                                    // IFMODE (1)
     0x3A,  1,  0x55,                                                                    // COLMOD (1)
     0xC2,  1,  0x44,                                                                    // PWRCTR3 (1)
@@ -204,14 +216,19 @@ const uint8_t dcs_lcd_init_seq_ili9486[] = {
                0x37, 0x06, 0x10, 0x03, 0x24, 0x20, 0x00,
     0xE2, 15,  0x0F, 0x32, 0x2E, 0x0B, 0x0D, 0x05, 0x47, 0x75,                        // DGAMCTRL (15)
                0x37, 0x06, 0x10, 0x03, 0x24, 0x20, 0x00,
+    0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_ili9486) == 67,
+_Static_assert(sizeof(dcs_lcd_init_seq_ili9486) == 76,
     "ili9486 init sequence size mismatch");
 
 // ILI9488 — from display_init_9488() in ili948x_display_driver.c
-// 14 command groups, no delays.  RGB666 (COLMOD 0x66, 3 bytes/pixel).
+// 16 command groups, 3 delays (SWRESET 5ms, SLPOUT 120ms, DISPON 120ms).
+// RGB666 (COLMOD 0x66, 3 bytes/pixel).
+// SLPOUT follows the vendor power commands; see ILI9341 seq for details.
 const uint8_t dcs_lcd_init_seq_ili9488[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0xB0,  1,  0x00,                                                                    // IFMODE (1)
     0xF7,  4,  0xA9, 0x51, 0x2C, 0x82,                                                 // ADJCTRL3 (4)
     0xC0,  2,  0x11, 0x09,                                                              // PWRCTR1 (2)
@@ -228,14 +245,18 @@ const uint8_t dcs_lcd_init_seq_ili9488[] = {
                0x4B, 0x0A, 0x0C, 0x0E, 0x18, 0x1B, 0x0F,
     0xE1, 15,  0x00, 0x17, 0x1A, 0x04, 0x0E, 0x06, 0x2F, 0x45,                        // NGAMCTRL (15)
                0x43, 0x02, 0x0A, 0x09, 0x32, 0x36, 0x0F,
+    0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_ili9488) == 80,
+_Static_assert(sizeof(dcs_lcd_init_seq_ili9488) == 89,
     "ili9488 init sequence size mismatch");
 
 // ST7789 standard — from display_init_std() in st7789_display_driver.c
-// 19 command groups, 2 delays (SLPOUT 120ms, COLMOD 10ms).
+// 21 command groups, 4 delays (SWRESET 5ms, SLPOUT 120ms, COLMOD 10ms,
+// DISPON 120ms).
 const uint8_t dcs_lcd_init_seq_st7789_std[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
     0x13,  0,                                                                           // NORON (0)
     0x36,  1,  0x00,                                                                    // MADCTL (1)
@@ -257,14 +278,17 @@ const uint8_t dcs_lcd_init_seq_st7789_std[] = {
                0x47, 0x0E, 0x1C, 0x17, 0x1B, 0x1E,
     0x2A,  4,  0x00, 0x00, 0x00, 0xEF,                                                 // CASET 0-239 (4)
     0x2B,  4,  0x00, 0x00, 0x01, 0x3F,                                                 // PASET 0-319 (4)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_st7789_std) == 98,
+_Static_assert(sizeof(dcs_lcd_init_seq_st7789_std) == 104,
     "st7789 std init sequence size mismatch");
 
 // ST7789 alt gamma 2 — from display_init_alt_gamma_2() in st7789_display_driver.c
-// 17 command groups, 2 delays (SLPOUT 120ms, COLMOD 10ms).
+// 19 command groups, 4 delays (SWRESET 5ms, SLPOUT 120ms, COLMOD 10ms,
+// DISPON 120ms).
 const uint8_t dcs_lcd_init_seq_st7789_alt[] = {
+    0x01,  DCS_LCD_INIT_SEQ_DELAY | 0,  5,                                             // SWRESET +5ms (0)
     0x11,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // SLPOUT +120ms (0)
     0x13,  0,                                                                           // NORON (0)
     0x36,  1,  0x00,                                                                    // MADCTL (1)
@@ -284,9 +308,10 @@ const uint8_t dcs_lcd_init_seq_st7789_alt[] = {
                0x4D, 0x38, 0x15, 0x16, 0x2C, 0x3E,
     0x2A,  4,  0x00, 0x00, 0x00, 0xEF,                                                 // CASET 0-239 (4)
     0x2B,  4,  0x00, 0x00, 0x01, 0x3F,                                                 // PASET 0-319 (4)
+    0x29,  DCS_LCD_INIT_SEQ_DELAY | 0,  120,                                           // DISPON +120ms (0)
     DCS_LCD_INIT_SEQ_END
 };
-_Static_assert(sizeof(dcs_lcd_init_seq_st7789_alt) == 89,
+_Static_assert(sizeof(dcs_lcd_init_seq_st7789_alt) == 95,
     "st7789 alt gamma 2 init sequence size mismatch");
 
 // clang-format on
