@@ -88,8 +88,20 @@ bool spi_display_parse_config(struct SPIDisplayConfig *spi_config, term opts, Gl
     term spi_port = interop_proplist_get_value(opts, spi_host_atom);
 
     ok = spi_driver_get_peripheral(spi_port, &spi_config->host_dev, global);
+    if (!ok) {
+        return false;
+    }
 
-    return ok;
+    term clock_speed_hz = interop_kv_get_value_default(
+        opts, ATOM_STR("\xE", "clock_speed_hz"), term_nil(), global);
+    if (clock_speed_hz != term_nil()) {
+        if (!term_is_integer(clock_speed_hz)) {
+            return false;
+        }
+        spi_config->clock_speed_hz = term_to_int(clock_speed_hz);
+    }
+
+    return true;
 }
 
 bool spi_display_init(struct SPIDisplay *spi_disp, struct SPIDisplayConfig *spi_config)
