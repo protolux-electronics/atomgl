@@ -76,6 +76,8 @@ struct DCSLCDDriver
 
     avm_int_t rotation;
 
+    struct DCSLCDScreen screen;
+
     Context *ctx;
 
     struct DisplayTaskArgs display_args;
@@ -83,8 +85,6 @@ struct DCSLCDDriver
 
 #define DCS_LCD_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct DCSLCDDriver, display_args)
-
-static struct DCSLCDScreen *screen;
 
 static void display_init(Context *ctx, term opts);
 
@@ -101,11 +101,11 @@ static void do_update(Context *ctx, term display_list)
         t = term_get_list_tail(t);
     }
 
-    int screen_width = screen->w;
-    int screen_height = screen->h;
     struct DCSLCDDriver *driver = DCS_LCD_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
-    dcs_lcd_set_paint_area(&driver->bus, screen, 0, 0, screen_width, screen_height);
+    dcs_lcd_set_paint_area(&driver->bus, &driver->screen, 0, 0, screen_width, screen_height);
     spi_dc_write_command(&driver->bus, DCS_LCD_RAMWR);
     spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
@@ -114,7 +114,7 @@ static void do_update(Context *ctx, term display_list)
     for (int ypos = 0; ypos < screen_height; ypos++) {
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = dcs_lcd_draw_x(screen, xpos, ypos, items, len);
+            int drawn_pixels = dcs_lcd_draw_x(&driver->screen, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -126,10 +126,10 @@ static void do_update(Context *ctx, term display_list)
         }
 
         //NEW CODE
-        void *tmp = screen->pixels;
-        screen->pixels = screen->pixels_out;
-        screen->pixels_out = tmp;
-        spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+        void *tmp = driver->screen.pixels;
+        driver->screen.pixels = driver->screen.pixels_out;
+        driver->screen.pixels_out = tmp;
+        spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), driver->screen.pixels_out);
         transaction_in_progress = true;
     }
 
@@ -175,7 +175,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        dcs_lcd_draw_buffer(&driver->bus, screen, 2, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&driver->bus, &driver->screen, 2, x, y, width, height, data);
 
         // draw_buffer is a kind of cast, no need to reply
         return;
@@ -217,14 +217,13 @@ Context *ili934x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = calloc(1, sizeof(struct DCSLCDScreen));
-    // FIXME: hardcoded width and height
-    screen->w = 320;
-    screen->h = 240;
-    screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
-    screen->pixels_out = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    struct DCSLCDDriver *driver = calloc(1, sizeof(struct DCSLCDDriver));
 
-    struct DCSLCDDriver *driver = malloc(sizeof(struct DCSLCDDriver));
+    // FIXME: hardcoded width and height
+    driver->screen.w = 320;
+    driver->screen.h = 240;
+    driver->screen.pixels = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    driver->screen.pixels_out = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
 
     driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
     driver->display_args.process_message_fn = process_message;
@@ -279,21 +278,11 @@ static void display_init(Context *ctx, term opts)
 
     gpio_set_direction(driver->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    spi_dc_write_command(&driver->bus, DCS_LCD_SWRESET);
-
-    vTaskDelay(5 / portTICK_PERIOD_MS);
-
     if (enable_ili93442c) {
         dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_ili9342c);
     } else {
         dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_ili9341);
     }
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_SLPOUT);
-
-    vTaskDelay(120 / portTICK_PERIOD_MS);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_DISPON);
 
     if (enable_tft_invon) {
         spi_dc_write_command(&driver->bus, DCS_LCD_INVON);

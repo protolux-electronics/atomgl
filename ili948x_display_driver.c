@@ -84,6 +84,8 @@ struct DCSLCDDriver
 
     bool madctl_bgr;
 
+    struct DCSLCDScreen screen;
+
     Context *ctx;
 
     struct DisplayTaskArgs display_args;
@@ -91,8 +93,6 @@ struct DCSLCDDriver
 
 #define DCS_LCD_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct DCSLCDDriver, display_args)
-
-static struct DCSLCDScreen *screen;
 
 // ILI9488 scanline conversion: RGB565 -> RGB888 bytes.
 static inline void rgb565_swapped_line_to_rgb888(uint8_t *dst, const uint16_t *src_swapped, int n_pixels)
@@ -129,11 +129,11 @@ static void do_update(Context *ctx, term display_list)
         t = term_get_list_tail(t);
     }
 
-    int screen_width = screen->w;
-    int screen_height = screen->h;
     struct DCSLCDDriver *driver = DCS_LCD_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
-    dcs_lcd_set_paint_area(&driver->bus, screen, 0, 0, screen_width, screen_height);
+    dcs_lcd_set_paint_area(&driver->bus, &driver->screen, 0, 0, screen_width, screen_height);
     spi_dc_write_command(&driver->bus, DCS_LCD_RAMWR);
     spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
@@ -142,7 +142,7 @@ static void do_update(Context *ctx, term display_list)
     for (int ypos = 0; ypos < screen_height; ypos++) {
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = dcs_lcd_draw_x(screen, xpos, ypos, items, len);
+            int drawn_pixels = dcs_lcd_draw_x(&driver->screen, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -152,19 +152,19 @@ static void do_update(Context *ctx, term display_list)
         }
 
         // Swap scanline buffers.
-        void *tmp = screen->pixels;
-        screen->pixels = screen->pixels_out;
-        screen->pixels_out = tmp;
+        void *tmp = driver->screen.pixels;
+        driver->screen.pixels = driver->screen.pixels_out;
+        driver->screen.pixels_out = tmp;
 
         if (!driver->is_ili9488) {
-            spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), screen->pixels_out);
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * sizeof(uint16_t), driver->screen.pixels_out);
         } else {
-            void *tmpb = screen->bytes;
-            screen->bytes = screen->bytes_out;
-            screen->bytes_out = tmpb;
+            void *tmpb = driver->screen.bytes;
+            driver->screen.bytes = driver->screen.bytes_out;
+            driver->screen.bytes_out = tmpb;
 
-            rgb565_swapped_line_to_rgb888(screen->bytes_out, screen->pixels_out, screen_width);
-            spi_display_dma_write(&driver->bus.spi_disp, screen_width * 3, screen->bytes_out);
+            rgb565_swapped_line_to_rgb888(driver->screen.bytes_out, driver->screen.pixels_out, screen_width);
+            spi_display_dma_write(&driver->bus.spi_disp, screen_width * 3, driver->screen.bytes_out);
         }
 
         transaction_in_progress = true;
@@ -212,7 +212,7 @@ static void process_message(Message *message, Context *ctx)
 
         const void *data = (const void *) ((addr_low | (addr_high << 16)));
 
-        dcs_lcd_draw_buffer(&driver->bus, screen, driver->is_ili9488 ? 3 : 2, x, y, width, height, data);
+        dcs_lcd_draw_buffer(&driver->bus, &driver->screen, driver->is_ili9488 ? 3 : 2, x, y, width, height, data);
 
         // draw_buffer is fire-and-forget.
         return;
@@ -277,9 +277,7 @@ Context *ili948x_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = calloc(1, sizeof(struct DCSLCDScreen));
-
-    struct DCSLCDDriver *driver = malloc(sizeof(struct DCSLCDDriver));
+    struct DCSLCDDriver *driver = calloc(1, sizeof(struct DCSLCDDriver));
 
     driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
     driver->display_args.process_message_fn = process_message;
@@ -351,22 +349,19 @@ static void display_init(Context *ctx, term opts)
 
     // Swap w/h for 90/270.
     if (driver->rotation & 1) {
-        screen->w = ILI948X_TFTHEIGHT;
-        screen->h = ILI948X_TFTWIDTH;
+        driver->screen.w = ILI948X_TFTHEIGHT;
+        driver->screen.h = ILI948X_TFTWIDTH;
     } else {
-        screen->w = ILI948X_TFTWIDTH;
-        screen->h = ILI948X_TFTHEIGHT;
+        driver->screen.w = ILI948X_TFTWIDTH;
+        driver->screen.h = ILI948X_TFTHEIGHT;
     }
 
-    screen->pixels = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
-    screen->pixels_out = heap_caps_malloc(screen->w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    driver->screen.pixels = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
+    driver->screen.pixels_out = heap_caps_malloc(driver->screen.w * sizeof(uint16_t), MALLOC_CAP_DMA);
 
     if (driver->is_ili9488) {
-        screen->bytes = heap_caps_malloc(screen->w * 3, MALLOC_CAP_DMA);
-        screen->bytes_out = heap_caps_malloc(screen->w * 3, MALLOC_CAP_DMA);
-    } else {
-        screen->bytes = NULL;
-        screen->bytes_out = NULL;
+        driver->screen.bytes = heap_caps_malloc(driver->screen.w * 3, MALLOC_CAP_DMA);
+        driver->screen.bytes_out = heap_caps_malloc(driver->screen.w * 3, MALLOC_CAP_DMA);
     }
 
     // Reset.
@@ -381,21 +376,11 @@ static void display_init(Context *ctx, term opts)
 
     gpio_set_direction(driver->bus.dc_gpio, GPIO_MODE_OUTPUT);
 
-    spi_dc_write_command(&driver->bus, DCS_LCD_SWRESET);
-
-    vTaskDelay(5 / portTICK_PERIOD_MS);
-
     if (driver->is_ili9488) {
         dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_ili9488);
     } else {
         dcs_lcd_execute_init_seq(&driver->bus, dcs_lcd_init_seq_ili9486);
     }
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_SLPOUT);
-
-    vTaskDelay(120 / portTICK_PERIOD_MS);
-
-    spi_dc_write_command(&driver->bus, DCS_LCD_DISPON);
 
     if (enable_tft_invon) {
         spi_dc_write_command(&driver->bus, DCS_LCD_INVON);
