@@ -65,6 +65,8 @@ struct EpaperDriver
     int busy_gpio;
     int reset_gpio;
 
+    struct EpaperScreen screen;
+
     Context *ctx;
 
     int count_to_refresh;
@@ -75,8 +77,6 @@ struct EpaperDriver
 
 #define EPAPER_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct EpaperDriver, display_args)
-
-static struct EpaperScreen *screen;
 
 static void display_reset(struct EpaperDriver *driver)
 {
@@ -180,7 +180,7 @@ static void do_update(Context *ctx, term display_list)
 
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = epaper_draw_x(screen, buf, xpos, ypos, items, len);
+            int drawn_pixels = epaper_draw_x(&driver->screen, buf, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -347,11 +347,10 @@ static void display_spi_init(Context *ctx, term opts)
 
     driver->ctx = ctx;
 
-    screen = calloc(1, sizeof(struct EpaperScreen));
-    screen->w = DISPLAY_WIDTH;
-    screen->h = DISPLAY_HEIGHT;
-    screen->palette = epaper_gdep073e01_palette;
-    screen->palette_size = 7;
+    driver->screen.w = DISPLAY_WIDTH;
+    driver->screen.h = DISPLAY_HEIGHT;
+    driver->screen.palette = epaper_gdep073e01_palette;
+    driver->screen.palette_size = 7;
 
     update_last_refresh_ts(ctx);
     driver->count_to_refresh = 0;
