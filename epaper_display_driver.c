@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2025 Davide Bettio <davide@uninstall.it>
+ * Copyright 2022-2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,9 +36,6 @@
 
 #include <esp32_sys.h>
 
-#define DISPLAY_WIDTH 800
-#define DISPLAY_HEIGHT 480
-
 #include "display_items.h"
 #include "display_message.h"
 #include "display_task.h"
@@ -65,6 +62,7 @@ struct EpaperDriver
     int busy_gpio;
     int reset_gpio;
 
+    const struct EPaperDesc *desc;
     struct EpaperScreen screen;
 
     Context *ctx;
@@ -77,6 +75,26 @@ struct EpaperDriver
 
 #define EPAPER_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct EpaperDriver, display_args)
+
+static const struct {
+    const char *compat;
+    const struct EPaperDesc *desc;
+} epaper_compat_table[] = {
+    { "waveshare,5in65-acep-7c", &epaper_desc_acep7c },
+    { "good-display/gdep073e01", &epaper_desc_gdep073e01 },
+};
+
+static const struct EPaperDesc *epaper_desc_for_compatible(const char *compat)
+{
+    for (size_t i = 0; i < sizeof(epaper_compat_table) / sizeof(epaper_compat_table[0]); i++) {
+        if (!strcmp(compat, epaper_compat_table[i].compat)) {
+            return epaper_compat_table[i].desc;
+        }
+    }
+    return NULL;
+}
+
+static void display_init_using_list(struct EpaperDriver *driver, term init_list);
 
 static void display_reset(struct EpaperDriver *driver)
 {
@@ -101,8 +119,8 @@ static void wait_some_time(Context *ctx)
     uint64_t now = tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL);
     uint64_t delta = now - driver->last_refresh;
     if (delta < 2000) {
-        // Wait 2 seconds before allowing a new refresh
-        // this is not on datasheets, but without this the screen will not update.
+        // Wait 2 seconds before allowing a new refresh; undocumented but
+        // empirically required or the panel drops updates.
         vTaskDelay((2000 - delta) / portTICK_PERIOD_MS);
     }
 }
@@ -118,24 +136,50 @@ static void update_last_refresh_ts(Context *ctx)
 
 static void maybe_refresh(Context *ctx)
 {
-#if 0
     struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
+    if (driver->desc->periodic_refresh_interval <= 0) {
+        return;
+    }
 
     driver->count_to_refresh--;
     if (driver->count_to_refresh <= 0) {
-        // 7 is the special "clear screen color"
+        // 7 is the panel's white entry on both current palettes.
         clear_screen(ctx, 7);
         update_last_refresh_ts(ctx);
-        driver->count_to_refresh = 5;
+        driver->count_to_refresh = driver->desc->periodic_refresh_interval;
     }
-#endif
+}
+
+static void send_frame_preamble(struct EpaperDriver *driver)
+{
+    if (driver->desc->frame_preamble_seq != NULL) {
+        epaper_execute_init_seq(&driver->bus, driver->busy_gpio,
+            driver->desc->frame_preamble_seq,
+            driver->desc->frame_preamble_seq_len, false);
+    }
+}
+
+static void send_post_frame_refresh(struct EpaperDriver *driver)
+{
+    // PON
+    spi_dc_write_command(&driver->bus, 0x04);
+    wait_busy_level(driver, 1);
+
+    // DRF (+ optional data byte)
+    spi_dc_write_command(&driver->bus, 0x12);
+    if (driver->desc->refresh_has_data) {
+        spi_dc_write_data_n(&driver->bus, &driver->desc->refresh_data_byte, 1);
+    }
+    wait_busy_level(driver, 1);
+
+    // POF
+    spi_dc_write_command(&driver->bus, 0x02);
+    wait_busy_level(driver, driver->desc->post_power_off_busy_level);
 }
 
 static void do_update(Context *ctx, term display_list)
 {
     maybe_refresh(ctx);
-    // it looks like we need to wait some time
-    // let's use 2 seconds
     wait_some_time(ctx);
 
     int proper;
@@ -149,24 +193,17 @@ static void do_update(Context *ctx, term display_list)
         t = term_get_list_tail(t);
     }
 
-    int screen_width = DISPLAY_WIDTH;
-    int screen_height = DISPLAY_HEIGHT;
     struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
-#if 0
-    // resolution command
-    spi_dc_write_command(&driver->bus, 0x61);
-    spi_dc_write_data(&driver->bus, 0x02);
-    spi_dc_write_data(&driver->bus, 0x58);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0xC0);
-#endif
+    send_frame_preamble(driver);
 
-    // update command
+    // DTM — data transfer to panel memory.
     spi_dc_write_command(&driver->bus, 0x10);
 
-    uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
-    memset(buf, 0x11, DISPLAY_WIDTH / 2);
+    uint8_t *buf = heap_caps_malloc(screen_width / 2, MALLOC_CAP_DMA);
+    memset(buf, 0x11, screen_width / 2);
 
     bool transaction_in_progress = false;
 
@@ -184,7 +221,7 @@ static void do_update(Context *ctx, term display_list)
             xpos += drawn_pixels;
         }
 
-        spi_display_dma_write(&driver->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        spi_display_dma_write(&driver->bus.spi_disp, screen_width / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -197,21 +234,7 @@ static void do_update(Context *ctx, term display_list)
 
     free(buf);
 
-    // not sure if we should add 0x11, which is end of data command or not
-
-    // power on command
-    spi_dc_write_command(&driver->bus, 0x04);
-    wait_busy_level(driver, 1);
-
-    // refresh command
-    spi_dc_write_command(&driver->bus, 0x12);
-    uint8_t refresh_data[] = {0x00};
-    spi_dc_write_data_n(&driver->bus, refresh_data, sizeof(refresh_data));
-    wait_busy_level(driver, 1);
-
-    // power off command
-    spi_dc_write_command(&driver->bus, 0x02);
-    wait_busy_level(driver, 1);
+    send_post_frame_refresh(driver);
 
     display_items_delete(items, len);
 
@@ -262,31 +285,29 @@ static void process_message(Message *message, Context *ctx)
 static void clear_screen(Context *ctx, int color)
 {
     struct EpaperDriver *driver = EPAPER_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
-    uint8_t *buf = heap_caps_malloc(DISPLAY_WIDTH / 2, MALLOC_CAP_DMA);
+    send_frame_preamble(driver);
 
-#if 0
-    spi_dc_write_command(&driver->bus, 0x61);
-    spi_dc_write_data(&driver->bus, 0x02);
-    spi_dc_write_data(&driver->bus, 0x58);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0xC0);
-#endif
     spi_dc_write_command(&driver->bus, 0x10);
+
+    uint8_t *buf = heap_caps_malloc(screen_width / 2, MALLOC_CAP_DMA);
 
     bool transaction_in_progress = false;
 
     spi_device_acquire_bus(driver->bus.spi_disp.handle, portMAX_DELAY);
 
-    for (int i = 0; i < DISPLAY_HEIGHT; i++) {
+    for (int i = 0; i < screen_height; i++) {
         if (transaction_in_progress) {
             spi_transaction_t *trans = NULL;
             spi_device_get_trans_result(driver->bus.spi_disp.handle, &trans, portMAX_DELAY);
         }
 
-        // let's ensure a memset otherwise we might generate odd artifacts
-        memset(buf, color | (color << 4), DISPLAY_WIDTH / 2);
-        spi_display_dma_write(&driver->bus.spi_disp, DISPLAY_WIDTH / 2, buf);
+        // memset inside the loop so every scanline carries fresh data,
+        // avoiding artefacts if a prior scanline left stale bytes.
+        memset(buf, color | (color << 4), screen_width / 2);
+        spi_display_dma_write(&driver->bus.spi_disp, screen_width / 2, buf);
         transaction_in_progress = true;
     }
 
@@ -299,24 +320,46 @@ static void clear_screen(Context *ctx, int color)
 
     free(buf);
 
-    spi_dc_write_command(&driver->bus, 0x04);
-    wait_busy_level(driver, 1);
-    spi_dc_write_command(&driver->bus, 0x12);
-    uint8_t refresh_data[] = {0x00};
-    spi_dc_write_data_n(&driver->bus, refresh_data, sizeof(refresh_data));
-    wait_busy_level(driver, 1);
-    spi_dc_write_command(&driver->bus, 0x02);
-    wait_busy_level(driver, 1);
+    send_post_frame_refresh(driver);
 }
 
 static void display_spi_init(Context *ctx, term opts)
 {
+    // Resolve compatible string -> per-panel descriptor.
+    term compat_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
+    int str_ok;
+    char *compat_string = interop_term_to_string(compat_term, &str_ok);
+    const struct EPaperDesc *desc = NULL;
+    if (str_ok && compat_string) {
+        desc = epaper_desc_for_compatible(compat_string);
+    }
+    if (!desc) {
+        ESP_LOGE(TAG, "Failed init: unknown or missing compatible '%s'.",
+            compat_string ? compat_string : "(null)");
+        free(compat_string);
+        return;
+    }
+    free(compat_string);
+
     struct EpaperDriver *driver = malloc(sizeof(struct EpaperDriver));
     // TODO check here
 
+    driver->desc = desc;
+    driver->ctx = ctx;
+    driver->screen.w = desc->native_width;
+    driver->screen.h = desc->native_height;
+    driver->screen.palette = desc->palette;
+    driver->screen.palette_size = desc->palette_size;
+
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    ctx->platform_data = &driver->display_args;
+
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
-    spi_config.clock_speed_hz = 4000000;
+    spi_config.clock_speed_hz = desc->spi_clock_hz;
     spi_display_parse_config(&spi_config, opts, ctx->global);
     spi_display_init(&driver->bus.spi_disp, &spi_config);
 
@@ -340,17 +383,16 @@ static void display_spi_init(Context *ctx, term opts)
 
     wait_busy_level(driver, 1);
 
-    epaper_execute_init_seq(&driver->bus, driver->busy_gpio,
-        epaper_init_seq_gdep073e01, epaper_init_seq_gdep073e01_len, true);
-
-    ctx->platform_data = &driver->display_args;
-
-    driver->ctx = ctx;
-
-    driver->screen.w = DISPLAY_WIDTH;
-    driver->screen.h = DISPLAY_HEIGHT;
-    driver->screen.palette = epaper_gdep073e01_palette;
-    driver->screen.palette_size = 7;
+    // Init sequence: init_list opt overrides the descriptor default.
+    term init_list = interop_kv_get_value_default(
+        opts, ATOM_STR("\x9", "init_list"), term_nil(), ctx->global);
+    if (init_list != term_nil()) {
+        display_init_using_list(driver, init_list);
+    } else {
+        epaper_execute_init_seq(&driver->bus, driver->busy_gpio,
+            desc->init_seq, desc->init_seq_len,
+            desc->init_wait_busy_between_cmds);
+    }
 
     update_last_refresh_ts(ctx);
     driver->count_to_refresh = 0;
@@ -366,9 +408,6 @@ static void display_spi_init(Context *ctx, term opts)
     while (1)
         ;
 #else
-    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
-    driver->display_args.process_message_fn = process_message;
-    driver->display_args.ctx = ctx;
     xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
 #endif
 }
@@ -379,4 +418,43 @@ Context *epaper_display_create_port(GlobalContext *global, term opts)
     ctx->native_handler = display_task_consume_mailbox;
     display_spi_init(ctx, opts);
     return ctx;
+}
+
+// Erlang-side init override: accepts a list of
+//   {CmdByte :: 0..255, Binary :: binary()}
+//   {sleep_ms, Ms :: 0..255}
+//   {wait_busy_level, Level :: 0 | 1}
+// tuples and applies them in order.  Mirrors dcs_lcd's display_init_using_list
+// with an added wait_busy_level clause, since e-paper controllers typically
+// require BUSY-pin polling between commands that DCS LCDs do not.
+static void display_init_using_list(struct EpaperDriver *driver, term init_list)
+{
+    term t = init_list;
+    while (term_is_nonempty_list(t)) {
+        term head = term_get_list_head(t);
+        if (term_is_tuple(head) && term_get_tuple_arity(head) == 2) {
+            term cmd_term = term_get_tuple_element(head, 0);
+            term data_term = term_get_tuple_element(head, 1);
+            if (term_is_integer(cmd_term) && term_is_binary(data_term)) {
+                avm_int_t cmd = term_to_int(cmd_term);
+                const uint8_t *data = (const uint8_t *) term_binary_data(data_term);
+                spi_dc_write_cmd_data(&driver->bus, cmd, data, term_binary_size(data_term));
+            } else if ((cmd_term == context_make_atom(driver->ctx, ATOM_STR("\x8", "sleep_ms")))
+                && term_is_integer(data_term)) {
+                vTaskDelay(term_to_int(data_term) / portTICK_PERIOD_MS);
+            } else if ((cmd_term == context_make_atom(driver->ctx, ATOM_STR("\xF", "wait_busy_level")))
+                && term_is_integer(data_term)) {
+                wait_busy_level(driver, term_to_int(data_term));
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+
+        t = term_get_list_tail(t);
+    }
+    if (t != term_nil()) {
+        fprintf(stderr, "Invalid init_list!\n");
+    }
 }
