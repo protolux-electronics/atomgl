@@ -44,31 +44,12 @@
 #include "display_task.h"
 #include "display_common.h"
 #include "epaper_color.h"
+#include "epaper_commands.h"
 #include "epaper_draw.h"
 #include "epaper_screen.h"
 #include "image_helpers.h"
 #include "spi_dc_driver.h"
 #include "spi_display.h"
-
-#define PSR         0x00
-#define PWRR        0x01
-#define POF         0x02
-#define POFS        0x03
-#define PON         0x04
-#define BTST1       0x05
-#define BTST2       0x06
-#define DSLP        0x07
-#define BTST3       0x08
-#define DTM         0x10
-#define DRF         0x12
-#define PLL         0x30
-#define CDI         0x50
-#define TCON        0x60
-#define TRES        0x61
-#define REV         0x70
-#define VDCS        0x82
-#define T_VDCS      0x84
-#define PWS         0xE3
 
 #define REPORT_UNEXPECTED_MSGS 0
 #define SELF_TEST 0
@@ -359,74 +340,8 @@ static void display_spi_init(Context *ctx, term opts)
 
     wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&driver->bus, 0xAA);
-    uint8_t psr1_data[] = {0x49, 0x55, 0x20, 0x08, 0x09, 0x18};
-    spi_dc_write_data_n(&driver->bus, psr1_data, sizeof(psr1_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, PWRR);
-    uint8_t pwrr_data[] = {0x3F};
-    spi_dc_write_data_n(&driver->bus, pwrr_data, sizeof(pwrr_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, PSR);
-    uint8_t psr_data[] = {0x5F, 0x69};
-    spi_dc_write_data_n(&driver->bus, psr_data, sizeof(psr_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, POFS);
-    uint8_t pofs_data[] = {0x00, 0x54, 0x00, 0x44};
-    spi_dc_write_data_n(&driver->bus, pofs_data, sizeof(pofs_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, BTST1);
-    uint8_t btst1_data[] = {0x40, 0x1F, 0x1F, 0x2C};
-    spi_dc_write_data_n(&driver->bus, btst1_data, sizeof(btst1_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, BTST2);
-    uint8_t btst2_data[] = {0x6F, 0x1F, 0x17, 0x49};
-    spi_dc_write_data_n(&driver->bus, btst2_data, sizeof(btst2_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, BTST3);
-    uint8_t btst3_data[] = {0x6F, 0x1F, 0x1F, 0x22};
-    spi_dc_write_data_n(&driver->bus, btst3_data, sizeof(btst3_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, PLL);
-    uint8_t pll_data[] = {0x00};
-    spi_dc_write_data_n(&driver->bus, pll_data, sizeof(pll_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, CDI);
-    uint8_t cdi_data[] = {0x3F};
-    spi_dc_write_data_n(&driver->bus, cdi_data, sizeof(cdi_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, TCON);
-    uint8_t tcon_data[] = {0x02, 0x00};
-    spi_dc_write_data_n(&driver->bus, tcon_data, sizeof(tcon_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, TRES);
-    uint8_t tres_data[] = {0x03, 0x20, 0x01, 0xe0};
-    spi_dc_write_data_n(&driver->bus, tres_data, sizeof(tres_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, T_VDCS);
-    uint8_t vdcs_data[] = {0x01};
-    spi_dc_write_data_n(&driver->bus, vdcs_data, sizeof(vdcs_data));
-    wait_busy_level(driver, 1);
-
-    spi_dc_write_command(&driver->bus, PWS);
-    uint8_t pws_data[] = {0x2F};
-    spi_dc_write_data_n(&driver->bus, pws_data, sizeof(pws_data));
-    wait_busy_level(driver, 1);
-
-    // PON
-    spi_dc_write_command(&driver->bus, 0x04);
-    wait_busy_level(driver, 1);
+    epaper_execute_init_seq(&driver->bus, driver->busy_gpio,
+        epaper_init_seq_gdep073e01, epaper_init_seq_gdep073e01_len, true);
 
     ctx->platform_data = &driver->display_args;
 

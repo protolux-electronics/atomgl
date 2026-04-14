@@ -45,6 +45,7 @@
 #include "display_task.h"
 #include "display_common.h"
 #include "epaper_color.h"
+#include "epaper_commands.h"
 #include "epaper_draw.h"
 #include "epaper_screen.h"
 #include "image_helpers.h"
@@ -332,42 +333,8 @@ static void display_spi_init(Context *ctx, term opts)
 
     wait_busy_level(driver, 1);
 
-    spi_dc_write_command(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0xEF);
-    spi_dc_write_data(&driver->bus, 0x08);
-    spi_dc_write_command(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0x37);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_data(&driver->bus, 0x23); //datasheet says: 0x05
-    spi_dc_write_data(&driver->bus, 0x23); //datasheet says: 0x05
-    spi_dc_write_command(&driver->bus, 0x03);
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_command(&driver->bus, 0x06);
-    spi_dc_write_data(&driver->bus, 0xC7);
-    spi_dc_write_data(&driver->bus, 0xC7);
-    spi_dc_write_data(&driver->bus, 0x1D);
-    spi_dc_write_command(&driver->bus, 0x30);
-    spi_dc_write_data(&driver->bus, 0x3C);
-    spi_dc_write_command(&driver->bus, 0x40); //datasheet says: 0x41
-    spi_dc_write_data(&driver->bus, 0x00);
-    spi_dc_write_command(&driver->bus, 0x50);
-    spi_dc_write_data(&driver->bus, 0x3F); //datasheet says: 0x37
-    spi_dc_write_command(&driver->bus, 0x60);
-    spi_dc_write_data(&driver->bus, 0x22);
-    spi_dc_write_command(&driver->bus, 0x61);
-    spi_dc_write_data(&driver->bus, 0x02);
-    spi_dc_write_data(&driver->bus, 0x58);
-    spi_dc_write_data(&driver->bus, 0x01);
-    spi_dc_write_data(&driver->bus, 0xC0);
-    spi_dc_write_command(&driver->bus, 0xE3);
-    spi_dc_write_data(&driver->bus, 0xAA);
-    spi_dc_write_command(&driver->bus, 0x82);
-    spi_dc_write_data(&driver->bus, 0x80);
-
-    vTaskDelay(10);
-
-    spi_dc_write_command(&driver->bus, 0x50);
-    spi_dc_write_data(&driver->bus, 0x37);
+    epaper_execute_init_seq(&driver->bus, driver->busy_gpio,
+        epaper_init_seq_acep7c, epaper_init_seq_acep7c_len, false);
 
     ctx->platform_data = &driver->display_args;
 
