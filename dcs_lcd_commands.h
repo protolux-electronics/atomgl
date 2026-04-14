@@ -80,4 +80,35 @@ extern const uint8_t dcs_lcd_init_seq_ili9488[];
 extern const uint8_t dcs_lcd_init_seq_st7789_std[];
 extern const uint8_t dcs_lcd_init_seq_st7789_alt[];
 
+// --- Per-controller descriptor ---
+//
+// Describes a DCS LCD controller variant so a unified driver can dispatch
+// on compatible string.  madctl[4] holds per-rotation MADCTL values (0xFF
+// for rotations not validated on the current hardware).  init_fn is a
+// fallback when a byte-array init sequence is insufficient; NULL for all
+// current controllers.
+
+struct DCSLCDDriver;  // forward declaration for init_fn
+
+struct DCSLCDDesc
+{
+    const char *name;
+    int native_width;
+    int native_height;
+    int spi_clock_hz;
+    uint8_t pixel_bytes;
+    uint8_t colmod_value;
+    uint8_t madctl[4];
+    bool default_bgr;
+    const uint8_t *default_init_seq;
+    void (*init_fn)(struct DCSLCDDriver *);
+};
+
+extern const struct DCSLCDDesc dcs_lcd_desc_ili9341;
+extern const struct DCSLCDDesc dcs_lcd_desc_ili9342c;
+extern const struct DCSLCDDesc dcs_lcd_desc_ili9486;
+extern const struct DCSLCDDesc dcs_lcd_desc_ili9488;
+extern const struct DCSLCDDesc dcs_lcd_desc_st7789;
+extern const struct DCSLCDDesc dcs_lcd_desc_st7796;
+
 #endif

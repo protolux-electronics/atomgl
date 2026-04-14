@@ -290,3 +290,92 @@ _Static_assert(sizeof(dcs_lcd_init_seq_st7789_alt) == 89,
     "st7789 alt gamma 2 init sequence size mismatch");
 
 // clang-format on
+
+// --- Per-controller descriptors ---
+//
+// madctl[4] values come from the current set_rotation() behavior:
+//   0xFF marks a rotation that the existing driver did not validate.
+// ILI948x has all 4 rotations (madctl_bgr ORed in at runtime from driver
+// state, so the table stores the base value without BGR).
+// ILI934x / ST7789 only support rotation 0 (init-default MADCTL) and
+// rotation 1 (overridden by set_rotation).
+
+const struct DCSLCDDesc dcs_lcd_desc_ili9341 = {
+    .name              = "ILI9341",
+    .native_width      = 240,
+    .native_height     = 320,
+    .spi_clock_hz      = 27000000,
+    .pixel_bytes       = 2,
+    .colmod_value      = 0x55,
+    .madctl            = { 0x08, 0xA8, 0xFF, 0xFF },
+    .default_bgr       = true,
+    .default_init_seq  = dcs_lcd_init_seq_ili9341,
+    .init_fn           = NULL,
+};
+
+const struct DCSLCDDesc dcs_lcd_desc_ili9342c = {
+    .name              = "ILI9342C",
+    .native_width      = 320,
+    .native_height     = 240,
+    .spi_clock_hz      = 27000000,
+    .pixel_bytes       = 2,
+    .colmod_value      = 0x55,
+    .madctl            = { 0xA0, 0xA8, 0xFF, 0xFF },
+    .default_bgr       = false,
+    .default_init_seq  = dcs_lcd_init_seq_ili9342c,
+    .init_fn           = NULL,
+};
+
+const struct DCSLCDDesc dcs_lcd_desc_ili9486 = {
+    .name              = "ILI9486",
+    .native_width      = 320,
+    .native_height     = 480,
+    .spi_clock_hz      = 27000000,
+    .pixel_bytes       = 2,
+    .colmod_value      = 0x55,
+    .madctl            = { 0x40, 0x20, 0x80, 0xE0 },
+    .default_bgr       = true,
+    .default_init_seq  = dcs_lcd_init_seq_ili9486,
+    .init_fn           = NULL,
+};
+
+const struct DCSLCDDesc dcs_lcd_desc_ili9488 = {
+    .name              = "ILI9488",
+    .native_width      = 320,
+    .native_height     = 480,
+    .spi_clock_hz      = 27000000,
+    .pixel_bytes       = 3,
+    .colmod_value      = 0x66,
+    .madctl            = { 0x40, 0x20, 0x80, 0xE0 },
+    .default_bgr       = true,
+    .default_init_seq  = dcs_lcd_init_seq_ili9488,
+    .init_fn           = NULL,
+};
+
+const struct DCSLCDDesc dcs_lcd_desc_st7789 = {
+    .name              = "ST7789",
+    .native_width      = 240,
+    .native_height     = 320,
+    .spi_clock_hz      = 40000000,
+    .pixel_bytes       = 2,
+    .colmod_value      = 0x55,
+    .madctl            = { 0x00, 0x60, 0xFF, 0xFF },
+    .default_bgr       = false,
+    .default_init_seq  = dcs_lcd_init_seq_st7789_std,
+    .init_fn           = NULL,
+};
+
+// ST7796 currently routes through the ST7789 driver and uses the same
+// init sequence.  It may diverge in a future session.
+const struct DCSLCDDesc dcs_lcd_desc_st7796 = {
+    .name              = "ST7796",
+    .native_width      = 320,
+    .native_height     = 480,
+    .spi_clock_hz      = 40000000,
+    .pixel_bytes       = 2,
+    .colmod_value      = 0x55,
+    .madctl            = { 0x00, 0x60, 0xFF, 0xFF },
+    .default_bgr       = false,
+    .default_init_seq  = dcs_lcd_init_seq_st7789_std,
+    .init_fn           = NULL,
+};
