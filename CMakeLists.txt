@@ -28,6 +28,7 @@ endif()
 
 idf_component_register(SRCS
     "dcs_lcd_commands.c"
+    "dcs_lcd_display_driver.c"
     "dcs_lcd_draw.c"
     "display_common.c"
     "display_driver.c"
@@ -44,7 +45,6 @@ idf_component_register(SRCS
     "ili948x_display_driver.c"
     "memory_display_driver.c"
     "ssd1306_display_driver.c"
-    "st7789_display_driver.c"
     "spi_dc_driver.c"
     "spi_display.c"
     "ufontlib.c"

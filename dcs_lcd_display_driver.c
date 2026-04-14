@@ -67,7 +67,7 @@
 
 #include "font_data.h"
 
-static const char *TAG = "st7789_display_driver";
+static const char *TAG = "dcs_lcd_display_driver";
 
 static inline void delay(int ms)
 {
@@ -213,7 +213,7 @@ static void set_rotation(struct DCSLCDDriver *driver, int rotation)
     }
 }
 
-Context *st7789_display_create_port(GlobalContext *global, term opts)
+Context *dcs_lcd_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
     ctx->native_handler = display_task_consume_mailbox;
