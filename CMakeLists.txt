@@ -43,7 +43,7 @@ idf_component_register(SRCS
     "font_data.c"
     "memory_display_driver.c"
     "oled_commands.c"
-    "ssd1306_display_driver.c"
+    "oled_display_driver.c"
     "spi_dc_driver.c"
     "spi_display.c"
     "ufontlib.c"

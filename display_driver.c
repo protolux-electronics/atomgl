@@ -32,7 +32,7 @@ static const char *TAG = "display_driver";
 Context *epaper_display_create_port(GlobalContext *global, term opts);
 Context *dcs_lcd_display_create_port(GlobalContext *global, term opts);
 Context *memory_lcd_display_create_port(GlobalContext *global, term opts);
-Context *ssd1306_display_create_port(GlobalContext *global, term opts);
+Context *oled_display_create_port(GlobalContext *global, term opts);
 
 Context *display_create_port(GlobalContext *global, term opts)
 {
@@ -64,11 +64,11 @@ Context *display_create_port(GlobalContext *global, term opts)
         || !strcmp(compat_string, "sitronix,st7796")) {
         ctx = dcs_lcd_display_create_port(global, opts);
     } else if (!strcmp(compat_string, "solomon-systech,ssd1306")) {
-        ctx = ssd1306_display_create_port(global, opts);
+        ctx = oled_display_create_port(global, opts);
     } else if (!strcmp(compat_string, "solomon-systech,ssd1315")) {
-        ctx = ssd1306_display_create_port(global, opts);
+        ctx = oled_display_create_port(global, opts);
     } else if (!strcmp(compat_string, "sino-wealth,sh1106")) {
-        ctx = ssd1306_display_create_port(global, opts);
+        ctx = oled_display_create_port(global, opts);
     } else {
         ESP_LOGE(TAG, "No matching display driver for given `comptaible`: `%s`.", compat_string);
     }

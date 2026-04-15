@@ -44,7 +44,7 @@
 #include "mono_draw.h"
 #include "oled_commands.h"
 
-#define TAG "SSD1306"
+#define TAG "oled_display"
 
 #define DISPLAY_WIDTH 128
 #define DISPLAY_HEIGHT 64
@@ -298,7 +298,7 @@ static void display_init(Context *ctx, term opts)
     i2c_driver_release(i2c_host, glb);
 }
 
-Context *ssd1306_display_create_port(GlobalContext *global, term opts)
+Context *oled_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
     ctx->native_handler = display_task_consume_mailbox;
