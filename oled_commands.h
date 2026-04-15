@@ -21,6 +21,7 @@
 #ifndef _OLED_COMMANDS_H_
 #define _OLED_COMMANDS_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -65,5 +66,42 @@ extern const uint8_t oled_init_seq_ssd1306[];
 extern const size_t oled_init_seq_ssd1306_len;
 extern const uint8_t oled_init_seq_ssd1315[];
 extern const size_t oled_init_seq_ssd1315_len;
+
+// --- Per-controller descriptor ---
+//
+// Captures every controller-specific knob so a single unified driver
+// can drive all three SSD13xx / SH1106 variants by compatible-string
+// dispatch.  The struct carries no function pointers: the variation
+// across SSD1306, SSD1315 and SH1106 is entirely data.
+
+struct OLEDDesc
+{
+    const char *name;
+    int native_width;
+    int native_height;
+    uint8_t i2c_address;
+
+    // One-time init sequence (length-framed format documented above).
+    const uint8_t *init_seq;
+    size_t init_seq_len;
+
+    // True for controllers that require an explicit column-address
+    // reset (lower nibble 0x00, upper nibble 0x10) before writing
+    // each page of pixel data.  SSD1315 and SH1106 need this; the
+    // bare SSD1306 retains its column pointer across pages and does
+    // not.
+    bool column_reset_per_page;
+
+    // Number of zero bytes to write at the start of each page's
+    // data stream.  SH1106 modules expose a 128-pixel viewport on a
+    // 132-pixel-wide controller, so the first two RAM columns are
+    // off-screen and skipped by writing 0x00 0x00 before the
+    // visible pixels.  Zero for SSD1306 and SSD1315.
+    uint8_t scanline_prefix_pad_bytes;
+};
+
+extern const struct OLEDDesc oled_desc_ssd1306;
+extern const struct OLEDDesc oled_desc_ssd1315;
+extern const struct OLEDDesc oled_desc_sh1106;
 
 #endif

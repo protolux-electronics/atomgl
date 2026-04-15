@@ -104,3 +104,45 @@ _Static_assert(sizeof(oled_init_seq_ssd1315) == 39,
 const size_t oled_init_seq_ssd1315_len = sizeof(oled_init_seq_ssd1315);
 
 // clang-format on
+
+// --- Per-controller descriptors ---
+
+const struct OLEDDesc oled_desc_ssd1306 = {
+    .name                       = "Solomon Systech SSD1306",
+    .native_width               = 128,
+    .native_height              = 64,
+    .i2c_address                = 0x3C,
+
+    .init_seq                   = oled_init_seq_ssd1306,
+    .init_seq_len               = sizeof(oled_init_seq_ssd1306),
+
+    .column_reset_per_page      = false,
+    .scanline_prefix_pad_bytes  = 0,
+};
+
+const struct OLEDDesc oled_desc_ssd1315 = {
+    .name                       = "Solomon Systech SSD1315",
+    .native_width               = 128,
+    .native_height              = 64,
+    .i2c_address                = 0x3C,
+
+    .init_seq                   = oled_init_seq_ssd1315,
+    .init_seq_len               = sizeof(oled_init_seq_ssd1315),
+
+    .column_reset_per_page      = true,
+    .scanline_prefix_pad_bytes  = 0,
+};
+
+const struct OLEDDesc oled_desc_sh1106 = {
+    .name                       = "Sino Wealth SH1106",
+    .native_width               = 128,
+    .native_height              = 64,
+    .i2c_address                = 0x3C,
+
+    // SH1106 shares the SSD1306 minimal init.
+    .init_seq                   = oled_init_seq_ssd1306,
+    .init_seq_len               = sizeof(oled_init_seq_ssd1306),
+
+    .column_reset_per_page      = true,
+    .scanline_prefix_pad_bytes  = 2,
+};
