@@ -41,6 +41,7 @@
 #include "display_message.h"
 #include "display_task.h"
 #include "image_helpers.h"
+#include "mono_draw.h"
 #include "oled_commands.h"
 
 #define TAG "SSD1306"
@@ -72,17 +73,16 @@ struct OLEDDriver
     display_type_t type;
     Context *ctx;
 
+    struct MonoScreen screen;
+
     struct DisplayTaskArgs display_args;
 };
 
 #define OLED_DRIVER_FROM_CTX(ctx) \
     CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct OLEDDriver, display_args)
 
-static struct MonoScreen *mono_screen;
-
 #include "font_data.h"
 #include "display_items.h"
-#include "mono_draw.h"
 
 static void do_update(Context *ctx, term display_list)
 {
@@ -114,7 +114,7 @@ static void do_update(Context *ctx, term display_list)
     for (int ypos = 0; ypos < screen_height; ypos++) {
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = mono_draw_x(mono_screen, buf, xpos, ypos, items, len);
+            int drawn_pixels = mono_draw_x(&driver->screen, buf, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -224,10 +224,6 @@ static void display_init(Context *ctx, term opts)
 
     bool invert = interop_kv_get_value(opts, ATOM_STR("\x6", "invert"), glb) == TRUE_ATOM;
 
-    mono_screen = calloc(1, sizeof(struct MonoScreen));
-    mono_screen->w = DISPLAY_WIDTH;
-    mono_screen->h = DISPLAY_HEIGHT;
-
     struct OLEDDriver *driver = malloc(sizeof(struct OLEDDriver));
 
     driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
@@ -236,6 +232,8 @@ static void display_init(Context *ctx, term opts)
     ctx->platform_data = &driver->display_args;
 
     driver->ctx = ctx;
+    driver->screen.w = DISPLAY_WIDTH;
+    driver->screen.h = DISPLAY_HEIGHT;
     driver->type = DisplayTypeSsd1306; // Default to SSD1306
 
     term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
