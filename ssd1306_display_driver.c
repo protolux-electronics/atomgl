@@ -51,8 +51,6 @@
 #define PAGE_HEIGHT 8
 #define PAGES_NUM 8
 
-#define I2C_ADDRESS 0x3C
-
 #define CTRL_BYTE_CMD_SINGLE 0x80
 #define CTRL_BYTE_CMD_STREAM 0x00
 #define CTRL_BYTE_DATA_STREAM 0x40
@@ -60,17 +58,10 @@
 #define CMD_DISPLAY_INVERTED 0xA7
 #define CMD_DISPLAY_ON 0xAF
 
-typedef enum
-{
-    DisplayTypeSsd1306,
-    DisplayTypeSsd1315,
-    DisplayTypeSh1106,
-} display_type_t;
-
 struct OLEDDriver
 {
     term i2c_host;
-    display_type_t type;
+    const struct OLEDDesc *desc;
     Context *ctx;
 
     struct MonoScreen screen;
@@ -83,6 +74,25 @@ struct OLEDDriver
 
 #include "font_data.h"
 #include "display_items.h"
+
+static const struct {
+    const char *compat;
+    const struct OLEDDesc *desc;
+} oled_compat_table[] = {
+    { "solomon-systech,ssd1306", &oled_desc_ssd1306 },
+    { "solomon-systech,ssd1315", &oled_desc_ssd1315 },
+    { "sino-wealth,sh1106", &oled_desc_sh1106 },
+};
+
+static const struct OLEDDesc *oled_desc_for_compatible(const char *compat)
+{
+    for (size_t i = 0; i < sizeof(oled_compat_table) / sizeof(oled_compat_table[0]); i++) {
+        if (!strcmp(compat, oled_compat_table[i].compat)) {
+            return oled_compat_table[i].desc;
+        }
+    }
+    return NULL;
+}
 
 static void do_update(Context *ctx, term display_list)
 {
@@ -127,13 +137,12 @@ static void do_update(Context *ctx, term display_list)
             i2c_cmd_handle_t cmd;
             cmd = i2c_cmd_link_create();
             i2c_master_start(cmd);
-            i2c_master_write_byte(cmd, (I2C_ADDRESS << 1) | I2C_MASTER_WRITE, true);
+            i2c_master_write_byte(cmd, (driver->desc->i2c_address << 1) | I2C_MASTER_WRITE, true);
 
             i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
             i2c_master_write_byte(cmd, 0xB0 | ypos / 8, true);
 
-            if (driver->type == DisplayTypeSh1106 || driver->type == DisplayTypeSsd1315) {
-                // SSD1315 and SH1106 require explicit column address reset
+            if (driver->desc->column_reset_per_page) {
                 i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
                 i2c_master_write_byte(cmd, 0x00, true);
                 i2c_master_write_byte(cmd, CTRL_BYTE_CMD_SINGLE, true);
@@ -141,23 +150,16 @@ static void do_update(Context *ctx, term display_list)
             }
             i2c_master_write_byte(cmd, CTRL_BYTE_DATA_STREAM, true);
 
-
-            if (driver->type == DisplayTypeSh1106) {
-                // add 2 empty pages on sh1106 since it can have up to 132 pixels
-                // and 128 pixel screen starts at (2, 0)
-                i2c_master_write_byte(cmd, 0, true);
+            // Pad the data stream with leading zero bytes for controllers
+            // whose RAM is wider than the visible pixel area (SH1106 exposes
+            // 128 of 132 columns starting at offset 2).
+            for (uint8_t k = 0; k < driver->desc->scanline_prefix_pad_bytes; k++) {
                 i2c_master_write_byte(cmd, 0, true);
             }
 
             for (uint8_t j = 0; j < DISPLAY_WIDTH; j++) {
                 i2c_master_write_byte(cmd, out_buf[j], true);
             }
-
-            // no need to send the last 2 page, the position will be set on next line again
-            // if (driver->type == DisplayTypeSh1106) {
-            //    i2c_master_write_byte(cmd, 0, true);
-            //    i2c_master_write_byte(cmd, 0, true);
-            // }
 
             i2c_master_stop(cmd);
             i2c_master_cmd_begin(i2c_num, cmd, 100 / portTICK_PERIOD_MS);
@@ -232,26 +234,26 @@ static void display_init(Context *ctx, term opts)
     ctx->platform_data = &driver->display_args;
 
     driver->ctx = ctx;
-    driver->screen.w = DISPLAY_WIDTH;
-    driver->screen.h = DISPLAY_HEIGHT;
-    driver->type = DisplayTypeSsd1306; // Default to SSD1306
 
-    term compat_value_term = interop_kv_get_value_default(opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
+    term compat_value_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\xA", "compatible"), term_nil(), ctx->global);
     int str_ok;
     char *compat_string = interop_term_to_string(compat_value_term, &str_ok);
-
-    if (!(str_ok && compat_string)) {
-        ESP_LOGE(TAG, "No Compatible Device Found.");
+    const struct OLEDDesc *desc = NULL;
+    if (str_ok && compat_string) {
+        desc = oled_desc_for_compatible(compat_string);
+    }
+    if (!desc) {
+        ESP_LOGE(TAG, "Failed init: unknown or missing compatible '%s'.",
+            compat_string ? compat_string : "(null)");
+        free(compat_string);
         return;
     }
-
-    if (!strcmp(compat_string, "sino-wealth,sh1106")) {
-        driver->type = DisplayTypeSh1106;
-    } else if (!strcmp(compat_string, "solomon-systech,ssd1315")) {
-        driver->type = DisplayTypeSsd1315;
-    }
-
     free(compat_string);
+
+    driver->desc = desc;
+    driver->screen.w = desc->native_width;
+    driver->screen.h = desc->native_height;
 
     int reset_gpio;
     if (!display_common_gpio_from_opts(opts, ATOM_STR("\x5", "reset"), &reset_gpio, glb)) {
@@ -270,23 +272,14 @@ static void display_init(Context *ctx, term opts)
     }
     driver->i2c_host = i2c_host;
 
-    const uint8_t *init_seq;
-    size_t init_seq_len;
-    if (driver->type == DisplayTypeSsd1315) {
-        init_seq = oled_init_seq_ssd1315;
-        init_seq_len = oled_init_seq_ssd1315_len;
-    } else {
-        init_seq = oled_init_seq_ssd1306;
-        init_seq_len = oled_init_seq_ssd1306_len;
-    }
-    oled_execute_init_seq(i2c_num, I2C_ADDRESS, init_seq, init_seq_len);
+    oled_execute_init_seq(i2c_num, desc->i2c_address, desc->init_seq, desc->init_seq_len);
 
     // Driver-controlled finalization: optional invert, then display ON.
     // These depend on a runtime opt and are not panel data, so they
     // stay outside the per-variant init array.
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (I2C_ADDRESS << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, (desc->i2c_address << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, CTRL_BYTE_CMD_STREAM, true);
     if (invert) {
         i2c_master_write_byte(cmd, CMD_DISPLAY_INVERTED, true);
@@ -296,7 +289,7 @@ static void display_init(Context *ctx, term opts)
 
     esp_err_t res = i2c_master_cmd_begin(i2c_num, cmd, 50 / portTICK_PERIOD_MS);
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "ssd1306/ssd1315 OLED configuration failed. error: 0x%.2X", res);
+        ESP_LOGE(TAG, "%s configuration failed. error: 0x%.2X", desc->name, res);
     } else {
         xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
     }
