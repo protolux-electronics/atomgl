@@ -52,6 +52,7 @@
 
 #include "display_common.h"
 #include "display_task.h"
+#include "mono_draw.h"
 #include "spi_display.h"
 
 #define DISPLAY_WIDTH 400
@@ -66,6 +67,8 @@ struct MemoryLCDDriver
     struct SPIDisplay spi_disp;
     Context *ctx;
 
+    struct MonoScreen screen;
+
     struct DisplayTaskArgs display_args;
 };
 
@@ -75,7 +78,6 @@ struct MemoryLCDDriver
 #include "display_items.h"
 #include "display_message.h"
 #include "image_helpers.h"
-#include "mono_draw.h"
 
 // This struct is just for compatibility reasons with the SDL display driver
 // so it is possible to easily copy & paste code from there.
@@ -89,7 +91,6 @@ struct Screen
 };
 
 static struct Screen *screen;
-static struct MonoScreen *mono_screen;
 
 static void display_init(Context *ctx, term opts);
 
@@ -139,7 +140,7 @@ static void do_update(Context *ctx, term display_list)
 
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = mono_draw_x(mono_screen, buf + 2, xpos, ypos, items, len);
+            int drawn_pixels = mono_draw_x(&driver->screen, buf + 2, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
@@ -225,14 +226,18 @@ Context *memory_lcd_display_create_port(GlobalContext *global, term opts)
 
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct Screen));
-    // FIXME: hardcoded width and height
-    screen->w = 400;
-    screen->h = 240;
+    GlobalContext *glb = ctx->global;
 
-    mono_screen = calloc(1, sizeof(struct MonoScreen));
-    mono_screen->w = DISPLAY_WIDTH;
-    mono_screen->h = DISPLAY_HEIGHT;
+    term width_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\x5", "width"), term_from_int(DISPLAY_WIDTH), glb);
+    term height_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\x6", "height"), term_from_int(DISPLAY_HEIGHT), glb);
+    int width = term_to_int(width_term);
+    int height = term_to_int(height_term);
+
+    screen = malloc(sizeof(struct Screen));
+    screen->w = width;
+    screen->h = height;
 
     int memsize = 2 + 400 / 8 + 2;
 
@@ -248,8 +253,6 @@ static void display_init(Context *ctx, term opts)
         abort();
     }
 
-    GlobalContext *glb = ctx->global;
-
     struct MemoryLCDDriver *driver = malloc(sizeof(struct MemoryLCDDriver));
 
     driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
@@ -258,6 +261,8 @@ static void display_init(Context *ctx, term opts)
     ctx->platform_data = &driver->display_args;
 
     driver->ctx = ctx;
+    driver->screen.w = width;
+    driver->screen.h = height;
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
