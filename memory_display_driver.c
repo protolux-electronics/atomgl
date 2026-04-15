@@ -69,6 +69,10 @@ struct MemoryLCDDriver
 
     struct MonoScreen screen;
 
+    uint8_t *pixels;
+    uint8_t *dma_out;
+    int vcom;
+
     struct DisplayTaskArgs display_args;
 };
 
@@ -79,31 +83,12 @@ struct MemoryLCDDriver
 #include "display_message.h"
 #include "image_helpers.h"
 
-// This struct is just for compatibility reasons with the SDL display driver
-// so it is possible to easily copy & paste code from there.
-struct Screen
-{
-    int w;
-    int h;
-    uint8_t *pixels;
-    uint8_t *dma_out;
-    // keep double buffer disabled for now: uint16_t *pixels_out;
-};
-
-static struct Screen *screen;
-
 static void display_init(Context *ctx, term opts);
 
-int vcom = 0x0;
-static inline int get_vcom()
+static inline int next_vcom(struct MemoryLCDDriver *driver)
 {
-    int current_vcom = vcom;
-    if (!vcom) {
-        vcom = 0x2;
-    } else {
-        vcom = 0;
-    }
-
+    int current_vcom = driver->vcom;
+    driver->vcom = current_vcom ? 0 : 0x2;
     return current_vcom;
 }
 
@@ -120,18 +105,18 @@ static void do_update(Context *ctx, term display_list)
         t = term_get_list_tail(t);
     }
 
-    int screen_width = screen->w;
-    int screen_height = screen->h;
     struct MemoryLCDDriver *driver = MEMORY_LCD_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
     int memsize = 2 + 400 / 8 + 2;
-    uint8_t *buf = screen->pixels;
+    uint8_t *buf = driver->pixels;
 
     spi_device_acquire_bus(driver->spi_disp.handle, portMAX_DELAY);
     bool transaction_in_progress = false;
 
     for (int ypos = 0; ypos < screen_height; ypos++) {
-        if (!screen->dma_out && transaction_in_progress) {
+        if (!driver->dma_out && transaction_in_progress) {
             spi_transaction_t *trans = NULL;
             spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
         }
@@ -144,22 +129,22 @@ static void do_update(Context *ctx, term display_list)
             xpos += drawn_pixels;
         }
 
-        buf[0] = 0x1 | get_vcom();
+        buf[0] = 0x1 | next_vcom(driver);
         buf[1] = ypos + 1;
         buf[2 + DISPLAY_WIDTH / 8] = 0;
         buf[2 + DISPLAY_WIDTH / 8 + 1] = 0;
 
-        if (screen->dma_out) {
+        if (driver->dma_out) {
             if (transaction_in_progress) {
                 spi_transaction_t *trans = NULL;
                 spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
             }
-            void *tmp = screen->pixels;
-            screen->pixels = screen->dma_out;
-            buf = screen->pixels;
-            screen->dma_out = tmp;
+            void *tmp = driver->pixels;
+            driver->pixels = driver->dma_out;
+            buf = driver->pixels;
+            driver->dma_out = tmp;
 
-            spi_display_dma_write(&driver->spi_disp, memsize, screen->dma_out);
+            spi_display_dma_write(&driver->spi_disp, memsize, driver->dma_out);
         } else {
             spi_display_dma_write(&driver->spi_disp, memsize, buf);
         }
@@ -235,23 +220,7 @@ static void display_init(Context *ctx, term opts)
     int width = term_to_int(width_term);
     int height = term_to_int(height_term);
 
-    screen = malloc(sizeof(struct Screen));
-    screen->w = width;
-    screen->h = height;
-
     int memsize = 2 + 400 / 8 + 2;
-
-    screen->pixels = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
-    if (UNLIKELY(!screen->pixels)) {
-        fprintf(stderr, "failed to allocate buf!\n");
-        abort();
-    }
-
-    screen->dma_out = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
-    if (UNLIKELY(!screen->dma_out)) {
-        fprintf(stderr, "failed to allocate buf!\n");
-        abort();
-    }
 
     struct MemoryLCDDriver *driver = malloc(sizeof(struct MemoryLCDDriver));
 
@@ -263,6 +232,19 @@ static void display_init(Context *ctx, term opts)
     driver->ctx = ctx;
     driver->screen.w = width;
     driver->screen.h = height;
+    driver->vcom = 0;
+
+    driver->pixels = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
+    if (UNLIKELY(!driver->pixels)) {
+        fprintf(stderr, "failed to allocate buf!\n");
+        abort();
+    }
+
+    driver->dma_out = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
+    if (UNLIKELY(!driver->dma_out)) {
+        fprintf(stderr, "failed to allocate buf!\n");
+        abort();
+    }
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
