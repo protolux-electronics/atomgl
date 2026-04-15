@@ -41,6 +41,7 @@
 #include "display_message.h"
 #include "display_task.h"
 #include "image_helpers.h"
+#include "oled_commands.h"
 
 #define TAG "SSD1306"
 
@@ -57,9 +58,6 @@
 
 #define CMD_DISPLAY_INVERTED 0xA7
 #define CMD_DISPLAY_ON 0xAF
-#define CMD_SET_SEGMENT_REMAP 0xA1
-#define CMD_SET_COM_SCAN_MODE 0xC8
-#define CMD_SET_CHARGE_PUMP 0x8D
 
 typedef enum
 {
@@ -273,69 +271,28 @@ static void display_init(Context *ctx, term opts)
         return;
     }
     driver->i2c_host = i2c_host;
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 
+    const uint8_t *init_seq;
+    size_t init_seq_len;
+    if (driver->type == DisplayTypeSsd1315) {
+        init_seq = oled_init_seq_ssd1315;
+        init_seq_len = oled_init_seq_ssd1315_len;
+    } else {
+        init_seq = oled_init_seq_ssd1306;
+        init_seq_len = oled_init_seq_ssd1306_len;
+    }
+    oled_execute_init_seq(i2c_num, I2C_ADDRESS, init_seq, init_seq_len);
+
+    // Driver-controlled finalization: optional invert, then display ON.
+    // These depend on a runtime opt and are not panel data, so they
+    // stay outside the per-variant init array.
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
     i2c_master_start(cmd);
     i2c_master_write_byte(cmd, (I2C_ADDRESS << 1) | I2C_MASTER_WRITE, true);
     i2c_master_write_byte(cmd, CTRL_BYTE_CMD_STREAM, true);
-
-    if (driver->type == DisplayTypeSsd1315) {
-        /*
-         * Init sequence derived from u8g2 project (BSD-2-Clause).
-         * Source: https://github.com/olikraus/u8g2
-         *
-         * These values are standard hardware initialization commands
-         * defined by the Solomon Systech SSD1315 datasheet.
-         */
-
-        i2c_master_write_byte(cmd, 0xAE, true);  // Display OFF
-
-        i2c_master_write_byte(cmd, 0xD5, true);  // Set Display Clock Divide Ratio / Oscillator Frequency
-        i2c_master_write_byte(cmd, 0x80, true);  // 0x80 is standard/stable
-
-        i2c_master_write_byte(cmd, 0xA8, true);  // Set Multiplex Ratio
-        i2c_master_write_byte(cmd, 0x3F, true);  // 64 MUX
-
-        i2c_master_write_byte(cmd, 0xD3, true);  // Set Display Offset
-        i2c_master_write_byte(cmd, 0x00, true);  // No offset
-
-        i2c_master_write_byte(cmd, 0x40, true);  // Set Display Start Line to 0
-
-        i2c_master_write_byte(cmd, 0x8D, true);  // Set Charge Pump
-        i2c_master_write_byte(cmd, 0x14, true);  // Enable Charge Pump
-
-        i2c_master_write_byte(cmd, 0xA1, true);  // Set Segment Remap
-        i2c_master_write_byte(cmd, 0xC8, true);  // Set COM Scan Mode
-
-        i2c_master_write_byte(cmd, 0xDA, true);  // Set COM Pins Hardware Configuration
-        i2c_master_write_byte(cmd, 0x12, true);  // Alternative COM pin config
-
-        i2c_master_write_byte(cmd, 0x81, true);  // Set Contrast Control
-        i2c_master_write_byte(cmd, 0xCF, true);  // Use High Contrast (0xCF) as per u8x8
-
-        i2c_master_write_byte(cmd, 0xD9, true);  // Set Pre-charge Period
-        i2c_master_write_byte(cmd, 0xF1, true);  // 0xF1 is required for stable 400kHz operation
-
-        i2c_master_write_byte(cmd, 0xDB, true);  // Set VCOMH Deselect Level
-        i2c_master_write_byte(cmd, 0x40, true);  // 0x40 (approx 0.77x VCC)
-
-        i2c_master_write_byte(cmd, 0xA4, true);  // Resume to RAM content display
-        i2c_master_write_byte(cmd, 0xA6, true);  // Normal Display (not inverted)
-
-        i2c_master_write_byte(cmd, 0xAD, true);  // Internal IREF Setting
-        i2c_master_write_byte(cmd, 0x10, true);  // Internal Iref
-    } else {
-        i2c_master_write_byte(cmd, CMD_SET_CHARGE_PUMP, true);
-        i2c_master_write_byte(cmd, 0x14, true);
-
-        i2c_master_write_byte(cmd, CMD_SET_SEGMENT_REMAP, true);
-        i2c_master_write_byte(cmd, CMD_SET_COM_SCAN_MODE, true);
-    }
-
     if (invert) {
         i2c_master_write_byte(cmd, CMD_DISPLAY_INVERTED, true);
     }
-
     i2c_master_write_byte(cmd, CMD_DISPLAY_ON, true);
     i2c_master_stop(cmd);
 
