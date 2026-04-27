@@ -68,7 +68,7 @@ static int get_color(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 void mono_draw_pixel_x(const struct MonoScreen *screen,
     uint8_t *line_buf, int xpos, int color)
 {
-    if (xpos > screen->w) {
+    if (xpos >= screen->w) {
         fprintf(stderr, "display buffer overflow: %i!\n", xpos);
         return;
     }

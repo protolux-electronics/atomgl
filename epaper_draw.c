@@ -34,7 +34,7 @@
 void epaper_draw_pixel_x(const struct EpaperScreen *screen,
     uint8_t *line_buf, int xpos, uint8_t c)
 {
-    if (xpos > screen->w) {
+    if (xpos >= screen->w) {
         fprintf(stderr, "buf ovf!\n");
         return;
     }
