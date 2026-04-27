@@ -601,6 +601,9 @@ static int ufont_iff_is_valid_ufl(const void *iff)
 
 EpdFont *ufont_parse(const void *iff_binary, int buf_size)
 {
+    if (!iff_binary || buf_size < 12) {
+        return NULL;
+    }
     if (!ufont_iff_is_valid_ufl(iff_binary)) {
         return NULL;
     }
