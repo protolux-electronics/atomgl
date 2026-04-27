@@ -79,8 +79,16 @@ static bool try_handle_register_font(Message *message, Context *ctx)
     }
 
     term font_bin = term_get_tuple_element(req, 2);
-    EpdFont *loaded_font = ufont_parse(
-            term_binary_data(font_bin), term_binary_size(font_bin));
+    size_t font_size = term_binary_size(font_bin);
+    void *owned_buf = malloc(font_size);
+    EpdFont *loaded_font = NULL;
+    if (owned_buf != NULL) {
+        memcpy(owned_buf, term_binary_data(font_bin), font_size);
+        loaded_font = ufont_parse(owned_buf, font_size);
+        if (loaded_font == NULL) {
+            free(owned_buf);
+        }
+    }
 
     char *handle = interop_atom_to_string(ctx,
             term_get_tuple_element(req, 1));
