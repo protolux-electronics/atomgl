@@ -66,7 +66,7 @@ void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
 
 void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
 {
-    item->owns_data = false;
+    memset(item, 0, sizeof(*item));
 
     term cmd = term_get_tuple_element(req, 0);
 
@@ -187,6 +187,7 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
                 fprintf(stderr, "unsupported font: ");
                 term_display(stderr, font, ctx);
                 fprintf(stderr, "\n");
+                free(text);
                 return;
             }
 
@@ -216,6 +217,7 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
             free(text);
             if (res != EPD_DRAW_SUCCESS) {
                 fprintf(stderr, "Failed to draw text. Error code: %i\n", res);
+                free(surface.buffer);
                 return;
             }
 
@@ -243,12 +245,6 @@ void display_items_init_item(BaseDisplayItem *item, term req, Context *ctx)
         fprintf(stderr, "unexpected display list command: ");
         term_display(stderr, req, ctx);
         fprintf(stderr, "\n");
-
-        item->primitive = PrimitiveInvalid;
-        item->x = -1;
-        item->y = -1;
-        item->width = 1;
-        item->height = 1;
     }
 }
 
