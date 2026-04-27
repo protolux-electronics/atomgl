@@ -32,12 +32,46 @@
 
 UFontManager *ufont_manager;
 
+static bool try_pre_ack_render_cmd(Message *message, Context *ctx)
+{
+    GenMessage gen_message;
+    if (UNLIKELY(port_parse_gen_message(message->message,
+                &gen_message) != GenCallMessage)) {
+        return false;
+    }
+
+    term req = gen_message.req;
+    if (UNLIKELY(!term_is_tuple(req) || term_get_tuple_arity(req) < 1)) {
+        return false;
+    }
+    term cmd = term_get_tuple_element(req, 0);
+
+    if (cmd != globalcontext_make_atom(ctx->global, "\x6" "update")
+            && cmd != globalcontext_make_atom(ctx->global,
+                    "\xB" "draw_buffer")) {
+        return false;
+    }
+
+    BEGIN_WITH_STACK_HEAP(TUPLE_SIZE(2) + REF_SIZE, heap);
+    term return_tuple = term_alloc_tuple(2, &heap);
+    term_put_tuple_element(return_tuple, 0, gen_message.ref);
+    term_put_tuple_element(return_tuple, 1, OK_ATOM);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
+    END_WITH_STACK_HEAP(heap, ctx->global);
+
+    return true;
+}
+
 NativeHandlerResult display_task_consume_mailbox(Context *ctx)
 {
     struct DisplayTaskArgs *args = ctx->platform_data;
 
     MailboxMessage *mbox_msg = mailbox_take_message(&ctx->mailbox);
     Message *msg = CONTAINER_OF(mbox_msg, Message, base);
+
+    // Pre-ack update / draw_buffer before the enqueue-or-drop
+    // dance so the caller doesn't time out if dropped.
+    try_pre_ack_render_cmd(msg, ctx);
 
     // Non-blocking enqueue; drop oldest on overflow.
     if (xQueueSend(args->messages_queue, &msg, 0) != pdTRUE) {

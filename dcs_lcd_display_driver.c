@@ -223,6 +223,7 @@ static void process_message(Message *message, Context *ctx)
                                       "update")) {
         term display_list = term_get_tuple_element(req, 1);
         do_update(ctx, display_list);
+        return;
 
     } else if (cmd == context_make_atom(ctx, "\xB"
                                              "draw_buffer")) {
@@ -237,7 +238,8 @@ static void process_message(Message *message, Context *ctx)
 
         dcs_lcd_draw_buffer(&driver->bus, &driver->screen, driver->desc->pixel_bytes, x, y, width, height, data);
 
-        // draw_buffer is a kind of cast, no need to reply
+        // Reply already sent at enqueue time by
+        // try_pre_ack_render_cmd in display_task.c.
         return;
 
     } else if (cmd == globalcontext_make_atom(ctx->global, "\xA" "load_image")) {
