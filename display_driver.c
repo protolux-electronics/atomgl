@@ -70,7 +70,7 @@ Context *display_create_port(GlobalContext *global, term opts)
     } else if (!strcmp(compat_string, "sino-wealth,sh1106")) {
         ctx = oled_display_create_port(global, opts);
     } else {
-        ESP_LOGE(TAG, "No matching display driver for given `comptaible`: `%s`.", compat_string);
+        ESP_LOGE(TAG, "No matching display driver for given `compatible`: `%s`.", compat_string);
     }
 
     free(compat_string);
