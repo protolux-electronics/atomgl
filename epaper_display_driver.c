@@ -186,6 +186,10 @@ static void do_update(Context *ctx, term display_list)
     int len = term_list_length(display_list, &proper);
 
     BaseDisplayItem *items = malloc(sizeof(BaseDisplayItem) * len);
+    if (UNLIKELY(!items)) {
+        fprintf(stderr, "do_update: failed to alloc items\n");
+        return;
+    }
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
@@ -203,6 +207,11 @@ static void do_update(Context *ctx, term display_list)
     spi_dc_write_command(&driver->bus, 0x10);
 
     uint8_t *buf = heap_caps_malloc(screen_width / 2, MALLOC_CAP_DMA);
+    if (UNLIKELY(!buf)) {
+        fprintf(stderr, "do_update: failed to alloc buf\n");
+        display_items_delete(items, len);
+        return;
+    }
     memset(buf, 0x11, screen_width / 2);
 
     bool transaction_in_progress = false;
@@ -294,6 +303,10 @@ static void clear_screen(Context *ctx, int color)
     spi_dc_write_command(&driver->bus, 0x10);
 
     uint8_t *buf = heap_caps_malloc(screen_width / 2, MALLOC_CAP_DMA);
+    if (UNLIKELY(!buf)) {
+        fprintf(stderr, "clear_screen: failed to alloc buf\n");
+        return;
+    }
 
     bool transaction_in_progress = false;
 

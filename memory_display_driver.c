@@ -98,6 +98,10 @@ static void do_update(Context *ctx, term display_list)
     int len = term_list_length(display_list, &proper);
 
     BaseDisplayItem *items = malloc(sizeof(BaseDisplayItem) * len);
+    if (UNLIKELY(!items)) {
+        fprintf(stderr, "do_update: failed to alloc items\n");
+        return;
+    }
 
     term t = display_list;
     for (int i = 0; i < len; i++) {

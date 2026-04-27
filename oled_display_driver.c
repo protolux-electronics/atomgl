@@ -100,6 +100,10 @@ static void do_update(Context *ctx, term display_list)
     int len = term_list_length(display_list, &proper);
 
     BaseDisplayItem *items = malloc(sizeof(BaseDisplayItem) * len);
+    if (UNLIKELY(!items)) {
+        fprintf(stderr, "do_update: failed to alloc items\n");
+        return;
+    }
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
@@ -113,11 +117,18 @@ static void do_update(Context *ctx, term display_list)
 
     int memsize = (DISPLAY_WIDTH * (PAGE_HEIGHT + 1)) / sizeof(uint8_t);
     uint8_t *buf = malloc(memsize);
+    if (UNLIKELY(!buf)) {
+        fprintf(stderr, "do_update: failed to alloc buf\n");
+        display_items_delete(items, len);
+        return;
+    }
     memset(buf, 0, memsize);
 
     i2c_port_t i2c_num;
     if (i2c_driver_acquire(driver->i2c_host, &i2c_num, ctx->global) != I2CAcquireOk) {
         fprintf(stderr, "Invalid I2C peripheral\n");
+        free(buf);
+        display_items_delete(items, len);
         return;
     }
 

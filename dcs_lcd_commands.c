@@ -20,7 +20,10 @@
 
 #include "dcs_lcd_commands.h"
 
+#include <stdio.h>
 #include <stdlib.h>
+
+#include <utils.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -62,6 +65,11 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
     if (pixel_bytes == 2) {
         int buf_pixel_size = (dest_size > 1024) ? 1024 : dest_size;
         uint16_t *tmpbuf = heap_caps_malloc(buf_pixel_size * sizeof(uint16_t), MALLOC_CAP_DMA);
+        if (UNLIKELY(!tmpbuf)) {
+            fprintf(stderr, "dcs_lcd_draw_buffer: failed to alloc tmpbuf (rgb565)\n");
+            spi_device_release_bus(bus->spi_disp.handle);
+            return;
+        }
 
         for (int i = 0; i < chunks; i++) {
             const uint16_t *data_b = data + 1024 * i;
@@ -86,6 +94,11 @@ void dcs_lcd_draw_buffer(struct SPIDCBus *bus, const struct DCSLCDScreen *screen
         // ILI9488: RGB565 -> RGB888 (3 bytes/pixel).
         const int chunk_pixels = 512;
         uint8_t *tmpbuf = heap_caps_malloc(chunk_pixels * 3, MALLOC_CAP_DMA);
+        if (UNLIKELY(!tmpbuf)) {
+            fprintf(stderr, "dcs_lcd_draw_buffer: failed to alloc tmpbuf (rgb888)\n");
+            spi_device_release_bus(bus->spi_disp.handle);
+            return;
+        }
 
         int i = 0;
         while (i < dest_size) {
