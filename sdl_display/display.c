@@ -31,16 +31,16 @@
 #include <term.h>
 #include <utils.h>
 
-#include "ufontlib.h"
+#include "../ufontlib.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
 #define BPP 4
 #define DEPTH 32
 
-#define CHAR_WIDTH 8
 #include "../display_items.h"
-#include "../font.c"
+#include "../display_message.h"
+#include "../font_data.h"
 #include "../image_helpers.h"
 
 struct DisplayOpts
@@ -125,17 +125,17 @@ static bool cmp_display_item(BaseDisplayItem *a, BaseDisplayItem *b)
     }
 
     switch (a->primitive) {
-        case Image:
+        case PrimitiveImage:
             return a->data.image_data.pix == b->data.image_data.pix;
 
-        case Rect:
+        case PrimitiveRect:
             return true;
 
-        case Text:
+        case PrimitiveText:
             return (a->data.text_data.fgcolor == b->data.text_data.fgcolor) &&
                 !strcmp(a->data.text_data.text, b->data.text_data.text);
 
-        case ScaledCroppedImage:
+        case PrimitiveScaledCroppedImage:
             return (a->data.image_data.pix == b->data.image_data.pix) &&
                 (a->x_scale == b->x_scale) && (a->y_scale == b->y_scale) &&
                 (a->source_x == b->source_x) && (a->source_y == b->source_y);
@@ -230,28 +230,6 @@ static inline Uint32 uint32_color_to_surface(struct Screen *screen, uint32_t col
     return SDL_MapRGB(screen->format, (color >> 24) & 0xFF, (color >> 16) & 0xFF, (color >> 8) & 0xFF);
 }
 
-struct Surface
-{
-    int width;
-    int height;
-    void *buffer;
-};
-
-void epd_draw_pixel(int xpos, int ypos, uint8_t color, void *buffer)
-{
-    struct Surface *surface = buffer;
-
-    if (xpos < 0 || ypos < 0 || xpos >= surface->width || ypos >= surface->height) {
-        return;
-    }
-
-    Uint32 *pixmem32b = (Uint32 *) (((uint8_t *) surface->buffer) + surface->width * ypos * BPP + xpos * BPP);
-
-    //TODO: handle other colors than black
-    UNUSED(color);
-    *pixmem32b = 0xFF000000;
-}
-
 static int draw_image_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *item)
 {
     int x = item->x;
@@ -343,7 +321,7 @@ static int draw_scaled_cropped_img_x(int xpos, int ypos, int max_line_len, BaseD
             return drawn_pixels;
         }
         drawn_pixels++;
-        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + (j / x_scale);
+        pixels = ((uint32_t *) data) + (source_y + ((ypos - y) / y_scale)) * img_width + source_x + ((j + 1) / x_scale);
     }
 
     return drawn_pixels;
@@ -425,11 +403,11 @@ static int draw_text_x(int xpos, int ypos, int max_line_len, BaseDisplayItem *it
     return drawn_pixels;
 }
 
-static int find_max_line_len(BaseDisplayItem *items, int count, int xpos, int ypos)
+static int find_max_line_len(BaseDisplayItem items[], size_t items_len, int xpos, int ypos)
 {
     int line_len = screen->w - xpos;
 
-    for (int i = 0; i < count; i++) {
+    for (size_t i = 0; i < items_len; i++) {
         BaseDisplayItem *item = &items[i];
 
         if ((xpos < item->x) && (ypos >= item->y) && (ypos < item->y + item->height)) {
@@ -441,11 +419,11 @@ static int find_max_line_len(BaseDisplayItem *items, int count, int xpos, int yp
     return line_len;
 }
 
-static int draw_x(int xpos, int ypos, BaseDisplayItem *items, int items_count)
+static int draw_x(int xpos, int ypos, BaseDisplayItem items[], size_t items_len)
 {
     bool below = false;
 
-    for (int i = 0; i < items_count; i++) {
+    for (size_t i = 0; i < items_len; i++) {
         BaseDisplayItem *item = &items[i];
         if ((xpos < item->x) || (xpos >= item->x + item->width) || (ypos < item->y) || (ypos >= item->y + item->height)) {
             continue;
@@ -455,19 +433,19 @@ static int draw_x(int xpos, int ypos, BaseDisplayItem *items, int items_count)
 
         int drawn_pixels = 0;
         switch (items[i].primitive) {
-            case Image:
+            case PrimitiveImage:
                 drawn_pixels = draw_image_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case ScaledCroppedImage:
+            case PrimitiveScaledCroppedImage:
                 drawn_pixels = draw_scaled_cropped_img_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case Rect:
+            case PrimitiveRect:
                 drawn_pixels = draw_rect_x(xpos, ypos, max_line_len, item);
                 break;
 
-            case Text:
+            case PrimitiveText:
                 drawn_pixels = draw_text_x(xpos, ypos, max_line_len, item);
                 break;
 
@@ -495,7 +473,7 @@ static void do_update(Context *ctx, term display_list)
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
@@ -503,7 +481,7 @@ static void do_update(Context *ctx, term display_list)
     damaged.valid = false;
     dumb_diff(prev_items, prev_items_len, items, len, &damaged);
     if (prev_items) {
-        destroy_items(prev_items, prev_items_len);
+        display_items_delete(prev_items, prev_items_len);
         destroy_message(prev_message, ctx->global);
     }
     prev_items = items;
@@ -601,10 +579,11 @@ static void process_message(Context *ctx)
         term font_bin = term_get_tuple_element(req, 2);
         EpdFont *loaded_font = ufont_parse(term_binary_data(font_bin), term_binary_size(font_bin));
 
-        AtomString handle_atom = globalcontext_atomstring_from_term(ctx->global, term_get_tuple_element(req, 1));
-        char handle[255];
-        atom_string_to_c(handle_atom, handle, sizeof(handle));
-        ufont_manager_register(ufont_manager, handle, loaded_font);
+        char *handle = interop_atom_to_string(ctx, term_get_tuple_element(req, 1));
+        if (handle != NULL) {
+            ufont_manager_register(ufont_manager, handle, loaded_font);
+            free(handle);
+        }
 
     } else {
         fprintf(stderr, "unexpected command: ");
@@ -648,12 +627,6 @@ static NativeHandlerResult consume_display_mailbox(Context *ctx)
     process_message(ctx);
 
     return NativeContinue;
-}
-
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
 }
 
 static inline int replace_new_line(int c)
@@ -739,7 +712,7 @@ void send_keyboard_event(struct KeyboardEvent *keyb, Context *ctx)
         term_put_tuple_element(event_tuple, 2, term_from_int(millis));
         term_put_tuple_element(event_tuple, 3, event_data_tuple);
 
-        send_message(keyboard_pid, event_tuple, glb);
+        display_message_send(keyboard_pid, event_tuple, glb);
 
         END_WITH_STACK_HEAP(heap, glb);
     }
@@ -811,7 +784,7 @@ void send_mouse_event(struct MouseEvent *mouse, Context *ctx)
         term_put_tuple_element(event_tuple, 2, term_from_int(millis));
         term_put_tuple_element(event_tuple, 3, event_data_tuple);
 
-        send_message(keyboard_pid, event_tuple, glb);
+        display_message_send(keyboard_pid, event_tuple, glb);
 
         END_WITH_STACK_HEAP(heap, glb);
     }

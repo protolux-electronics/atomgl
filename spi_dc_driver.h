@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2020-2022 Davide Bettio <davide@uninstall.it>
+ * Copyright 2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _DISPLAY_DRIVER_H_
-#define _DISPLAY_DRIVER_H_
+#ifndef _SPI_DC_DRIVER_H_
+#define _SPI_DC_DRIVER_H_
 
-#include <context.h>
-#include <term.h>
+#include <stddef.h>
+#include <stdint.h>
 
-Context *display_create_port(GlobalContext *global, term opts);
+#include "spi_display.h"
+
+struct SPIDCBus
+{
+    struct SPIDisplay spi_disp;
+    int dc_gpio;
+};
+
+void spi_dc_write_data(struct SPIDCBus *bus, uint32_t data);
+void spi_dc_write_command(struct SPIDCBus *bus, uint8_t cmd);
+void spi_dc_write_cmd_data(struct SPIDCBus *bus, uint8_t cmd, const uint8_t *data, size_t data_len);
+void spi_dc_write_data_n(struct SPIDCBus *bus, const uint8_t *data, size_t data_len);
 
 #endif

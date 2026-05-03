@@ -27,15 +27,26 @@ else()
 endif()
 
 idf_component_register(SRCS
+    "dcs_lcd_commands.c"
+    "dcs_lcd_display_driver.c"
+    "dcs_lcd_draw.c"
     "display_common.c"
     "display_driver.c"
-    "5in65_acep_7c_display_driver.c"
-    "ili934x_display_driver.c"
-    "ili948x_display_driver.c"
+    "display_items.c"
+    "display_message.c"
+    "display_task.c"
+    "epaper_color.c"
+    "epaper_commands.c"
+    "epaper_draw.c"
+    "mono_draw.c"
+    "epaper_display_driver.c"
+    "font_data.c"
     "memory_display_driver.c"
-    "ssd1306_display_driver.c"
-    "st7789_display_driver.c"
+    "oled_commands.c"
+    "oled_display_driver.c"
+    "spi_dc_driver.c"
     "spi_display.c"
+    "ufontlib.c"
     "backlight_gpio.c"
     "image_helpers.c"
     "spng.c"
@@ -44,7 +55,7 @@ idf_component_register(SRCS
     ${OPTIONAL_WHOLE_ARCHIVE}
 )
 
-target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DSPNG_USE_MINIZ=1")
+target_compile_definitions(${COMPONENT_TARGET} PRIVATE "-DSPNG_USE_MINIZ=1" "-DENABLE_UFONT")
 
 if (IDF_VERSION_MAJOR EQUAL 4)
     idf_build_set_property(

@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2020-2022 Davide Bettio <davide@uninstall.it>
+ * Copyright 2020-2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _DISPLAY_DRIVER_H_
-#define _DISPLAY_DRIVER_H_
+#ifndef _DCS_LCD_SCREEN_H_
+#define _DCS_LCD_SCREEN_H_
 
-#include <context.h>
-#include <term.h>
+#include <stdint.h>
 
-Context *display_create_port(GlobalContext *global, term opts);
+// Per-display state shared across the DCS LCD scanline rendering pipeline.
+struct DCSLCDScreen
+{
+    int w;
+    int h;
+    int16_t x_offset;
+    int16_t y_offset;
+    uint16_t *pixels;
+    uint16_t *pixels_out;
+
+    // ILI9488: 3 bytes/pixel.
+    uint8_t *bytes;
+    uint8_t *bytes_out;
+};
 
 #endif

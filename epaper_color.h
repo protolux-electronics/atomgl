@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2020-2022 Davide Bettio <davide@uninstall.it>
+ * Copyright 2022-2026 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _DISPLAY_DRIVER_H_
-#define _DISPLAY_DRIVER_H_
+#ifndef _EPAPER_COLOR_H_
+#define _EPAPER_COLOR_H_
 
-#include <context.h>
-#include <term.h>
+#include <stdint.h>
 
-Context *display_create_port(GlobalContext *global, term opts);
+extern const uint8_t epaper_acep_palette[7][3];
+extern const uint8_t epaper_gdep073e01_palette[7][3];
+
+uint8_t epaper_dither_acep7(int x, int y, uint8_t r, uint8_t g, uint8_t b,
+    const uint8_t palette[][3], int palette_size);
 
 #endif

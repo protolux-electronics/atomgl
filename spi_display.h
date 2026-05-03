@@ -24,6 +24,7 @@
 #include <driver/spi_master.h>
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <globalcontext.h>
 
@@ -46,8 +47,8 @@ struct SPIDisplayConfig
 };
 
 bool spi_display_init(struct SPIDisplay *spi_disp, struct SPIDisplayConfig *spi_config);
-bool spi_display_dmawrite(struct SPIDisplay *spi_data, int data_len, const void *data);
-bool spi_display_write(struct SPIDisplay *spi_data, int data_len, uint32_t data);
+bool spi_display_dma_write(struct SPIDisplay *spi_disp, size_t data_len, const void *data);
+bool spi_display_write(struct SPIDisplay *spi_disp, size_t data_len, uint32_t data);
 void spi_display_init_config(struct SPIDisplayConfig *spi_config);
 bool spi_display_parse_config(struct SPIDisplayConfig *spi_config, term opts, GlobalContext *global);
 

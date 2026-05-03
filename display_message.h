@@ -1,7 +1,7 @@
 /*
  * This file is part of AtomGL.
  *
- * Copyright 2020-2022 Davide Bettio <davide@uninstall.it>
+ * Copyright 2022 Davide Bettio <davide@uninstall.it>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef _DISPLAY_DRIVER_H_
-#define _DISPLAY_DRIVER_H_
+#ifndef _DISPLAY_MESSAGE_H_
+#define _DISPLAY_MESSAGE_H_
 
-#include <context.h>
+#include <globalcontext.h>
 #include <term.h>
 
-Context *display_create_port(GlobalContext *global, term opts);
+void display_message_send(term pid, term message, GlobalContext *global);
 
 #endif

@@ -51,62 +51,44 @@
 #include <math.h>
 
 #include "display_common.h"
+#include "display_task.h"
+#include "mono_draw.h"
 #include "spi_display.h"
 
-#define CHAR_WIDTH 8
-
 #define DISPLAY_WIDTH 400
+#define DISPLAY_HEIGHT 240
 
-#define CHECK_OVERFLOW 1
 #define REPORT_UNEXPECTED_MSGS 0
 
-#include "font.c"
+#include "font_data.h"
 
-struct SPI
+struct MemoryLCDDriver
 {
     struct SPIDisplay spi_disp;
     Context *ctx;
-};
 
-#include "display_items.h"
-#include "draw_common.h"
-#include "image_helpers.h"
-#include "monochrome.h"
+    struct MonoScreen screen;
 
-// This struct is just for compatibility reasons with the SDL display driver
-// so it is possible to easily copy & paste code from there.
-struct Screen
-{
-    int w;
-    int h;
     uint8_t *pixels;
     uint8_t *dma_out;
-    // keep double buffer disabled for now: uint16_t *pixels_out;
+    int vcom;
+
+    struct DisplayTaskArgs display_args;
 };
 
-static struct Screen *screen;
+#define MEMORY_LCD_DRIVER_FROM_CTX(ctx) \
+    CONTAINER_OF((struct DisplayTaskArgs *) (ctx)->platform_data, struct MemoryLCDDriver, display_args)
 
-struct PendingReply
-{
-    uint64_t pending_call_ref_ticks;
-    term pending_call_pid;
-};
+#include "display_items.h"
+#include "display_message.h"
+#include "image_helpers.h"
 
-static QueueHandle_t display_messages_queue;
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx);
 static void display_init(Context *ctx, term opts);
 
-int vcom = 0x0;
-static inline int get_vcom()
+static inline int next_vcom(struct MemoryLCDDriver *driver)
 {
-    int current_vcom = vcom;
-    if (!vcom) {
-        vcom = 0x2;
-    } else {
-        vcom = 0;
-    }
-
+    int current_vcom = driver->vcom;
+    driver->vcom = current_vcom ? 0 : 0x2;
     return current_vcom;
 }
 
@@ -116,55 +98,59 @@ static void do_update(Context *ctx, term display_list)
     int len = term_list_length(display_list, &proper);
 
     BaseDisplayItem *items = malloc(sizeof(BaseDisplayItem) * len);
+    if (UNLIKELY(!items)) {
+        fprintf(stderr, "do_update: failed to alloc items\n");
+        return;
+    }
 
     term t = display_list;
     for (int i = 0; i < len; i++) {
-        init_item(&items[i], term_get_list_head(t), ctx);
+        display_items_init_item(&items[i], term_get_list_head(t), ctx);
         t = term_get_list_tail(t);
     }
 
-    int screen_width = screen->w;
-    int screen_height = screen->h;
-    struct SPI *spi = ctx->platform_data;
+    struct MemoryLCDDriver *driver = MEMORY_LCD_DRIVER_FROM_CTX(ctx);
+    int screen_width = driver->screen.w;
+    int screen_height = driver->screen.h;
 
     int memsize = 2 + 400 / 8 + 2;
-    uint8_t *buf = screen->pixels;
+    uint8_t *buf = driver->pixels;
 
-    spi_device_acquire_bus(spi->spi_disp.handle, portMAX_DELAY);
+    spi_device_acquire_bus(driver->spi_disp.handle, portMAX_DELAY);
     bool transaction_in_progress = false;
 
     for (int ypos = 0; ypos < screen_height; ypos++) {
-        if (!screen->dma_out && transaction_in_progress) {
+        if (!driver->dma_out && transaction_in_progress) {
             spi_transaction_t *trans = NULL;
-            spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+            spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
         }
 
         memset(buf + 2, 0xFF, DISPLAY_WIDTH / 8);
 
         int xpos = 0;
         while (xpos < screen_width) {
-            int drawn_pixels = draw_x(buf + 2, xpos, ypos, items, len);
+            int drawn_pixels = mono_draw_x(&driver->screen, buf + 2, xpos, ypos, items, len);
             xpos += drawn_pixels;
         }
 
-        buf[0] = 0x1 | get_vcom();
+        buf[0] = 0x1 | next_vcom(driver);
         buf[1] = ypos + 1;
         buf[2 + DISPLAY_WIDTH / 8] = 0;
         buf[2 + DISPLAY_WIDTH / 8 + 1] = 0;
 
-        if (screen->dma_out) {
+        if (driver->dma_out) {
             if (transaction_in_progress) {
                 spi_transaction_t *trans = NULL;
-                spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+                spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
             }
-            void *tmp = screen->pixels;
-            screen->pixels = screen->dma_out;
-            buf = screen->pixels;
-            screen->dma_out = tmp;
+            void *tmp = driver->pixels;
+            driver->pixels = driver->dma_out;
+            buf = driver->pixels;
+            driver->dma_out = tmp;
 
-            spi_display_dmawrite(&spi->spi_disp, memsize, screen->dma_out);
+            spi_display_dma_write(&driver->spi_disp, memsize, driver->dma_out);
         } else {
-            spi_display_dmawrite(&spi->spi_disp, memsize, buf);
+            spi_display_dma_write(&driver->spi_disp, memsize, buf);
         }
 
         transaction_in_progress = true;
@@ -172,14 +158,12 @@ static void do_update(Context *ctx, term display_list)
 
     if (transaction_in_progress) {
         spi_transaction_t *trans;
-        spi_device_get_trans_result(spi->spi_disp.handle, &trans, portMAX_DELAY);
+        spi_device_get_trans_result(driver->spi_disp.handle, &trans, portMAX_DELAY);
     }
 
-    spi_device_release_bus(spi->spi_disp.handle);
-    destroy_items(items, len);
+    spi_device_release_bus(driver->spi_disp.handle);
+    display_items_delete(items, len);
 }
-
-static void send_message(term pid, term message, GlobalContext *global);
 
 static void process_message(Message *message, Context *ctx)
 {
@@ -199,6 +183,7 @@ static void process_message(Message *message, Context *ctx)
                                       "update")) {
         term display_list = term_get_tuple_element(req, 1);
         do_update(ctx, display_list);
+        return;
 
     } else if (cmd == globalcontext_make_atom(ctx->global, "\xA" "load_image")) {
         handle_load_image(req, gen_message.ref, gen_message.pid, ctx);
@@ -217,77 +202,54 @@ static void process_message(Message *message, Context *ctx)
     term_put_tuple_element(return_tuple, 0, gen_message.ref);
     term_put_tuple_element(return_tuple, 1, OK_ATOM);
 
-    send_message(gen_message.pid, return_tuple, ctx->global);
+    display_message_send(gen_message.pid, return_tuple, ctx->global);
     END_WITH_STACK_HEAP(heap, ctx->global);
-}
-
-static void process_messages(void *arg)
-{
-    struct SPI *args = arg;
-
-    while (true) {
-        Message *message;
-        xQueueReceive(display_messages_queue, &message, portMAX_DELAY);
-        process_message(message, args->ctx);
-
-        BEGIN_WITH_STACK_HEAP(1, temp_heap);
-        mailbox_message_dispose(&message->base, &temp_heap);
-        END_WITH_STACK_HEAP(temp_heap, args->ctx->global);
-    }
-}
-
-static NativeHandlerResult display_driver_consume_mailbox(Context *ctx)
-{
-    MailboxMessage *mbox_msg = mailbox_take_message(&ctx->mailbox);
-    Message *msg = CONTAINER_OF(mbox_msg, Message, base);
-
-    xQueueSend(display_messages_queue, &msg, 1);
-
-    return NativeContinue;
 }
 
 Context *memory_lcd_display_create_port(GlobalContext *global, term opts)
 {
     Context *ctx = context_new(global);
-    ctx->native_handler = display_driver_consume_mailbox;
+    ctx->native_handler = display_task_consume_mailbox;
     display_init(ctx, opts);
     return ctx;
 }
 
-static void send_message(term pid, term message, GlobalContext *global)
-{
-    int local_process_id = term_to_local_process_id(pid);
-    globalcontext_send_message(global, local_process_id, message);
-}
-
 static void display_init(Context *ctx, term opts)
 {
-    screen = malloc(sizeof(struct Screen));
-    // FIXME: hardcoded width and height
-    screen->w = 400;
-    screen->h = 240;
-    int memsize = 2 + 400 / 8 + 2;
-
-    screen->pixels = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
-    if (UNLIKELY(!screen->pixels)) {
-        fprintf(stderr, "failed to allocate buf!\n");
-        abort();
-    }
-
-    screen->dma_out = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
-    if (UNLIKELY(!screen->dma_out)) {
-        fprintf(stderr, "failed to allocate buf!\n");
-        abort();
-    }
-
-    display_messages_queue = xQueueCreate(32, sizeof(Message *));
-
     GlobalContext *glb = ctx->global;
 
-    struct SPI *spi = malloc(sizeof(struct SPI));
-    ctx->platform_data = spi;
+    term width_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\x5", "width"), term_from_int(DISPLAY_WIDTH), glb);
+    term height_term = interop_kv_get_value_default(
+        opts, ATOM_STR("\x6", "height"), term_from_int(DISPLAY_HEIGHT), glb);
+    int width = term_to_int(width_term);
+    int height = term_to_int(height_term);
 
-    spi->ctx = ctx;
+    int memsize = 2 + 400 / 8 + 2;
+
+    struct MemoryLCDDriver *driver = malloc(sizeof(struct MemoryLCDDriver));
+
+    driver->display_args.messages_queue = xQueueCreate(32, sizeof(Message *));
+    driver->display_args.process_message_fn = process_message;
+    driver->display_args.ctx = ctx;
+    ctx->platform_data = &driver->display_args;
+
+    driver->ctx = ctx;
+    driver->screen.w = width;
+    driver->screen.h = height;
+    driver->vcom = 0;
+
+    driver->pixels = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
+    if (UNLIKELY(!driver->pixels)) {
+        fprintf(stderr, "failed to allocate buf!\n");
+        abort();
+    }
+
+    driver->dma_out = heap_caps_malloc(memsize, MALLOC_CAP_DMA);
+    if (UNLIKELY(!driver->dma_out)) {
+        fprintf(stderr, "failed to allocate buf!\n");
+        abort();
+    }
 
     struct SPIDisplayConfig spi_config;
     spi_display_init_config(&spi_config);
@@ -298,7 +260,7 @@ static void display_init(Context *ctx, term opts)
     spi_config.cs_ena_pretrans = 4; // it should be at least 3us
     spi_config.cs_ena_posttrans = 2; // it should be at least 1us
     spi_display_parse_config(&spi_config, opts, ctx->global);
-    spi_display_init(&spi->spi_disp, &spi_config);
+    spi_display_init(&driver->spi_disp, &spi_config);
 
     int en_gpio;
     bool ok = display_common_gpio_from_opts(opts, ATOM_STR("\x2", "en"), &en_gpio, glb);
@@ -308,5 +270,5 @@ static void display_init(Context *ctx, term opts)
         gpio_set_level(en_gpio, 1);
     }
 
-    xTaskCreate(process_messages, "display", 10000, spi, 1, NULL);
+    xTaskCreate(display_task_process_messages, "display", 10000, &driver->display_args, 1, NULL);
 }
